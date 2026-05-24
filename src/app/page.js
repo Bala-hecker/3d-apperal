@@ -451,7 +451,7 @@ export default function HomeLandingPage() {
                   { label: "Track Orders", href: "/dashboard" },
                   { label: "Admin Panel", href: "/admin" },
                 ].map(link => (
-                  <Link key={link.href} href={link.href} className="block text-xs text-zinc-500 hover:text-indigo-400 font-medium transition-colors">{link.label}</Link>
+                  <Link key={link.label} href={link.href} className="block text-xs text-zinc-500 hover:text-indigo-400 font-medium transition-colors">{link.label}</Link>
                 ))}
               </div>
             </div>
