@@ -27,6 +27,7 @@ import {
   ShieldAlert
 } from "lucide-react";
 import Link from "next/link";
+import Navbar from "@/components/Navbar";
 import * as THREE from "three";
 import { GLTFLoader } from "three/examples/jsm/loaders/GLTFLoader.js";
 import { OrbitControls } from "three/examples/jsm/controls/OrbitControls.js";
@@ -39,6 +40,17 @@ const getSlug = (name) => {
     .trim()
     .replace(/[^a-z0-9]+/g, "-")
     .replace(/(^-|-$)/g, "");
+};
+
+const isTemplateProduct = (p) => {
+  if (!p) return false;
+  if (p.glb_file_url) return true; // Any product with a GLB file is a 3D model template/blank for the studio!
+  if (p.is_template === true) return true;
+  const cat = (p.category || "").toLowerCase().trim();
+  if (cat === "custom-template" || cat === "template" || cat.startsWith("custom-")) return true;
+  const name = (p.name || "").toLowerCase();
+  if (name.includes("template") || name.includes("blank")) return true;
+  return false;
 };
 
 export default function AdminPage() {
@@ -62,6 +74,19 @@ export default function AdminPage() {
   // Form State additions
   const [price, setPrice] = useState("3999");
   const [category, setCategory] = useState("t-shirt");
+  const [description, setDescription] = useState("");
+  const [galleryFiles, setGalleryFiles] = useState([]);
+  const [isTemplate, setIsTemplate] = useState(false);
+  const [selectedBaseTemplateId, setSelectedBaseTemplateId] = useState("");
+  const [showDiagnosticsModal, setShowDiagnosticsModal] = useState(false);
+
+  // Edit Product Extensions
+  const [editDescription, setEditDescription] = useState("");
+  const [editGalleryUrls, setEditGalleryUrls] = useState("");
+  const [editIsTemplate, setEditIsTemplate] = useState(false);
+
+  // Sub tab selection
+  const [adminInventorySubTab, setAdminInventorySubTab] = useState("standard");
 
   // Audit Logs State
   const [auditLogs, setAuditLogs] = useState([]);
@@ -113,6 +138,24 @@ export default function AdminPage() {
       }
     } catch (e) {
       mismatches.push("Missing 'carrier' or 'tracking_number' columns in your 'orders' table.");
+    }
+
+    try {
+      const { error } = await supabase.from("products").select("is_template, description, gallery_urls").limit(1);
+      if (error && (error.message.includes("column") || error.code === "PGRST205" || error.code === "42703")) {
+        mismatches.push("Missing new columns ('is_template', 'description', 'gallery_urls') in the 'products' table.");
+      }
+    } catch (e) {
+      mismatches.push("Missing new columns ('is_template', 'description', 'gallery_urls') in the 'products' table.");
+    }
+
+    try {
+      const { error } = await supabase.from("product_reviews").select("*").limit(1);
+      if (error && (error.message.includes("does not exist") || error.code === "PGRST205" || error.code === "42P01")) {
+        mismatches.push("Missing the 'product_reviews' table in your Supabase database schema.");
+      }
+    } catch (e) {
+      mismatches.push("Missing the 'product_reviews' table in your Supabase database schema.");
     }
 
     try {
@@ -565,26 +608,30 @@ export default function AdminPage() {
     const parsedPrice = parseFloat(editPrice) || 3999;
     let updateSuccess = false;
 
-    // First try: name, price, and category update
+    // First try: name, price, category, description, gallery_urls, is_template update
     try {
       const { error } = await supabase
         .from("products")
         .update({
           name: editName,
           price: parsedPrice,
-          category: editCategory
+          category: editCategory,
+          description: editDescription,
+          gallery_urls: editGalleryUrls,
+          is_template: editIsTemplate
         })
         .eq("id", productId);
 
       if (!error) {
         updateSuccess = true;
       } else {
-        console.warn("Category update failed, retrying price and name only...", error.message);
+        console.warn("Category/Extensions update failed, retrying standard columns...", error.message);
         const { error: retryError } = await supabase
           .from("products")
           .update({
             name: editName,
-            price: parsedPrice
+            price: parsedPrice,
+            category: editIsTemplate ? "custom-template" : editCategory
           })
           .eq("id", productId);
 
@@ -621,14 +668,22 @@ export default function AdminPage() {
     }
 
     // Always update local products state & audit log to provide seamless operation
-    await addAuditLog(`Updated base product details for ID #${productId.substring(0, 8)}. New Name: "${editName}", Category: "${editCategory}", Price: ₹${parsedPrice.toLocaleString('en-IN')}.`);
-    setProducts(products.map(p => p.id === productId ? { ...p, name: editName, price: parsedPrice, category: editCategory } : p));
+    await addAuditLog(`Updated base product details for ID #${productId.substring(0, 8)}. New Name: "${editName}", Category: "${editCategory}", Price: ₹${parsedPrice.toLocaleString('en-IN')}, Type: ${editIsTemplate ? 'Template' : 'Standard'}.`);
+    setProducts(products.map(p => p.id === productId ? { 
+      ...p, 
+      name: editName, 
+      price: parsedPrice, 
+      category: editCategory, 
+      description: editDescription,
+      gallery_urls: editGalleryUrls,
+      is_template: editIsTemplate
+    } : p));
     setEditingProduct(null);
 
     if (updateSuccess) {
       setStatusMsg({ type: "success", text: "Product details saved successfully!" });
     } else {
-      setStatusMsg({ type: "warning", text: "Saved locally fallback! Please run schema.sql inside Supabase to sync price column." });
+      setStatusMsg({ type: "warning", text: "Saved locally fallback! Please run schema.sql inside Supabase to sync new columns." });
     }
     setSavingEdit(false);
   };
@@ -641,10 +696,12 @@ export default function AdminPage() {
         router.push("/auth");
       } else {
         const adminEmailSetting = process.env.NEXT_PUBLIC_ADMIN_EMAIL || "";
-        const adminEmails = adminEmailSetting.split(",").map(e => e.trim().toLowerCase());
+        const adminEmails = adminEmailSetting 
+          ? adminEmailSetting.split(",").map(e => e.trim().toLowerCase())
+          : ["admin@example.com", "admin@thread3d.com"];
         const userEmail = currentSession.user?.email?.toLowerCase();
 
-        if (adminEmailSetting && !adminEmails.includes(userEmail)) {
+        if (!adminEmails.includes(userEmail)) {
           alert("Access Denied: You are not authorized to view the admin panel.");
           router.push("/");
         } else {
@@ -663,10 +720,12 @@ export default function AdminPage() {
         router.push("/auth");
       } else {
         const adminEmailSetting = process.env.NEXT_PUBLIC_ADMIN_EMAIL || "";
-        const adminEmails = adminEmailSetting.split(",").map(e => e.trim().toLowerCase());
+        const adminEmails = adminEmailSetting 
+          ? adminEmailSetting.split(",").map(e => e.trim().toLowerCase())
+          : ["admin@example.com", "admin@thread3d.com"];
         const userEmail = newSession.user?.email?.toLowerCase();
 
-        if (adminEmailSetting && !adminEmails.includes(userEmail)) {
+        if (!adminEmails.includes(userEmail)) {
           router.push("/");
         } else {
           setSession(newSession);
@@ -722,35 +781,64 @@ export default function AdminPage() {
     }
   };
 
+  // Handle Gallery Uploads
+  const handleGalleryChange = (e) => {
+    if (e.target.files) {
+      const files = Array.from(e.target.files);
+      const invalidFile = files.find(file => !file.type.startsWith("image/"));
+      if (invalidFile) {
+        setStatusMsg({ type: "error", text: "Please upload valid image files for the gallery." });
+        return;
+      }
+      setGalleryFiles(files);
+    }
+  };
+
   // Submit Product Form
   const handleSubmit = async (e) => {
     e.preventDefault();
-    if (!name || !glbFile || !textureFile) {
-      setStatusMsg({ type: "error", text: "All fields (Name, GLB Model, and Texture) are required." });
-      return;
+    
+    // Check validation based on Template (Requires GLB upload) vs Ready-made Catalog Product
+    if (isTemplate) {
+      if (!name || !glbFile || !textureFile) {
+        setStatusMsg({ type: "error", text: "All fields (Name, GLB Model, and Texture) are required for templates." });
+        return;
+      }
+    } else {
+      if (!name || !textureFile) {
+        setStatusMsg({ type: "error", text: "Name and Main Display Photo are required for standard catalog products." });
+        return;
+      }
     }
 
     setUploading(true);
     setStatusMsg({ type: "info", text: "Starting file uploads..." });
 
     try {
-      // 1. Upload GLB model
-      const glbExt = glbFile.name.split(".").pop();
-      const glbFileName = `${Date.now()}_${Math.random().toString(36).substr(2, 9)}.${glbExt}`;
-      const glbPath = `models/${glbFileName}`;
+      let glbPublicUrl = null;
 
-      setStatusMsg({ type: "info", text: "Uploading 3D model to cloud storage..." });
-      const { error: glbUploadErr } = await supabase.storage
-        .from("product-assets")
-        .upload(glbPath, glbFile, { cacheControl: "3600", upsert: false });
+      if (isTemplate) {
+        // 1. Upload GLB model (Only for 3D Configurator templates!)
+        const glbExt = glbFile.name.split(".").pop();
+        const glbFileName = `${Date.now()}_${Math.random().toString(36).substr(2, 9)}.${glbExt}`;
+        const glbPath = `models/${glbFileName}`;
 
-      if (glbUploadErr) throw new Error(`GLB Upload failed: ${glbUploadErr.message}`);
+        setStatusMsg({ type: "info", text: "Uploading 3D model to cloud storage..." });
+        const { error: glbUploadErr } = await supabase.storage
+          .from("product-assets")
+          .upload(glbPath, glbFile, { cacheControl: "3600", upsert: false });
 
-      const { data: glbUrlData } = supabase.storage
-        .from("product-assets")
-        .getPublicUrl(glbPath);
-      
-      const glbPublicUrl = glbUrlData.publicUrl;
+        if (glbUploadErr) throw new Error(`GLB Upload failed: ${glbUploadErr.message}`);
+
+        const { data: glbUrlData } = supabase.storage
+          .from("product-assets")
+          .getPublicUrl(glbPath);
+        
+        glbPublicUrl = glbUrlData.publicUrl;
+      } else {
+        // Standard ready-made catalog products do not have 3D models (purely 2D)
+        glbPublicUrl = null;
+      }
 
       // 2. Upload Texture image
       const textureExt = textureFile.name.split(".").pop();
@@ -770,55 +858,98 @@ export default function AdminPage() {
 
       const texturePublicUrl = textureUrlData.publicUrl;
 
+      // 2b. Upload Gallery images (if any)
+      const uploadedGalleryUrls = [];
+      if (galleryFiles && galleryFiles.length > 0) {
+        setStatusMsg({ type: "info", text: `Uploading ${galleryFiles.length} gallery images...` });
+        for (let i = 0; i < galleryFiles.length; i++) {
+          const file = galleryFiles[i];
+          const ext = file.name.split(".").pop();
+          const fileName = `${Date.now()}_gal_${i}_${Math.random().toString(36).substr(2, 5)}.${ext}`;
+          const filePath = `gallery/${fileName}`;
+
+          const { error: uploadErr } = await supabase.storage
+            .from("product-assets")
+            .upload(filePath, file, { cacheControl: "3600", upsert: false });
+
+          if (uploadErr) {
+            console.error(`Gallery file ${i} upload failed:`, uploadErr.message);
+            continue;
+          }
+
+          const { data: urlData } = supabase.storage
+            .from("product-assets")
+            .getPublicUrl(filePath);
+
+          uploadedGalleryUrls.push(urlData.publicUrl);
+        }
+      }
+
+      const galleryUrlsString = uploadedGalleryUrls.join(",");
+
       // 3. Save DB Row
       setStatusMsg({ type: "info", text: "Registering product in database..." });
       const parsedPrice = parseFloat(price) || 3999;
       
+      const insertData = {
+        name,
+        glb_file_url: glbPublicUrl,
+        texture_url: texturePublicUrl,
+        price: parsedPrice,
+        category: category,
+        description: description,
+        gallery_urls: galleryUrlsString,
+        is_template: isTemplate
+      };
+
       let dbErr = null;
       try {
         const { error } = await supabase
           .from("products")
-          .insert([
-            {
-              name,
-              glb_file_url: glbPublicUrl,
-              texture_url: texturePublicUrl,
-              price: parsedPrice,
-              category: category
-            }
-          ]);
+          .insert([insertData]);
         dbErr = error;
       } catch (err) {
         dbErr = err;
       }
 
       if (dbErr) {
-        console.warn("Category insert failed, retrying without category column fallback:", dbErr.message || dbErr);
+        console.warn("Complete columns insert failed, retrying standard columns...", dbErr.message || dbErr);
+        // Fallback retry using category fallback for template identification
+        const fallbackData = {
+          name,
+          glb_file_url: glbPublicUrl,
+          texture_url: texturePublicUrl,
+          price: parsedPrice,
+          category: isTemplate ? "custom-template" : category
+        };
         const { error: retryErr } = await supabase
           .from("products")
-          .insert([
-            {
-              name,
-              glb_file_url: glbPublicUrl,
-              texture_url: texturePublicUrl,
-              price: parsedPrice
-            }
-          ]);
+          .insert([fallbackData]);
         if (retryErr) throw retryErr;
       }
 
       // Log Security Audit Log!
-      await addAuditLog(`Uploaded and registered new base 3D model product "${name}" with pricing: ₹${parsedPrice.toLocaleString('en-IN')}.`);
+      await addAuditLog(`Uploaded and registered new product "${name}" (Type: ${isTemplate ? 'Template' : 'Standard'}) with pricing: ₹${parsedPrice.toLocaleString('en-IN')}.`);
 
       setStatusMsg({ type: "success", text: "Product uploaded and created successfully!" });
       setName("");
       setPrice("3999");
       setGlbFile(null);
       setTextureFile(null);
+      setDescription("");
+      setGalleryFiles([]);
+      setIsTemplate(false);
+      setSelectedBaseTemplateId("");
       
-      // Reset file input elements manually
-      document.getElementById("glb-input").value = "";
-      document.getElementById("texture-input").value = "";
+      // Reset file input elements manually safely
+      const glbInput = document.getElementById("glb-input");
+      if (glbInput) glbInput.value = "";
+      
+      const textureInput = document.getElementById("texture-input");
+      if (textureInput) textureInput.value = "";
+      
+      const galleryInput = document.getElementById("gallery-input");
+      if (galleryInput) galleryInput.value = "";
 
       // Refresh product list
       fetchProducts();
@@ -929,57 +1060,62 @@ export default function AdminPage() {
   return (
     <div className="min-h-screen bg-zinc-950 text-white pb-20">
       
-      {/* Header Bar */}
-      <header className="border-b border-zinc-900 bg-zinc-900/30 backdrop-blur-md sticky top-0 z-50">
-        <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 h-16 flex items-center justify-between">
-          <div className="flex items-center gap-4">
-            <Link href="/" className="p-2 hover:bg-zinc-800 rounded-lg text-zinc-400 hover:text-white transition-colors">
-              <ArrowLeft className="w-5 h-5" />
-            </Link>
-            <div className="flex items-center gap-2">
-              <span className="w-2.5 h-2.5 bg-rose-500 rounded-full animate-pulse" />
-              <h1 className="text-lg font-bold tracking-tight">Admin Control Center</h1>
-            </div>
+      {/* Header Bar (Shared Navbar) */}
+      <Navbar>
+        <div className="flex items-center gap-3">
+          <div className="flex items-center gap-2 bg-rose-500/10 border border-rose-500/20 text-rose-400 text-[10px] font-bold px-2.5 py-1 rounded-full uppercase tracking-wider">
+            <span className="w-1.5 h-1.5 bg-rose-500 rounded-full animate-ping" />
+            <span>Admin Dashboard</span>
           </div>
-          
-          <div className="flex items-center gap-4">
-            <span className="text-xs text-zinc-500 hidden sm:inline">{session?.user?.email}</span>
-            <button
-              onClick={handleSignOut}
-              className="text-xs font-semibold px-3 py-1.5 bg-zinc-900 hover:bg-zinc-800 border border-zinc-800 rounded-lg transition-colors cursor-pointer"
-            >
-              Sign Out
-            </button>
-          </div>
-        </div>
-      </header>
 
-      {dbMismatches.length > 0 && (
-        <div className="max-w-5xl mx-auto px-4 sm:px-6 lg:px-8 mt-6">
-          <div className="bg-amber-500/10 border-2 border-amber-500/25 rounded-2xl p-5 backdrop-blur-lg flex gap-4 items-start shadow-xl shadow-amber-500/5">
-            <div className="p-2 bg-amber-500/15 rounded-xl text-amber-400 shrink-0">
-              <ShieldAlert className="w-6 h-6 animate-pulse" />
-            </div>
-            <div className="flex-1 space-y-2">
-              <h4 className="text-sm font-extrabold text-amber-400 tracking-wide uppercase">
-                Supabase Database Schema Warning
-              </h4>
-              <p className="text-xs text-zinc-300 leading-relaxed font-medium">
-                Your cloud Supabase database is missing critical structural elements required for tracking:
-              </p>
-              <ul className="list-disc list-inside text-[11px] text-zinc-400 font-mono space-y-1 py-1">
-                {dbMismatches.map((m, idx) => (
-                  <li key={idx} className="text-amber-300/80">{m}</li>
-                ))}
-              </ul>
-              <div className="bg-zinc-950/80 border border-zinc-800 rounded-xl p-4 mt-3 space-y-2.5">
-                <p className="text-[11px] text-zinc-400 leading-relaxed">
-                  💡 <strong>How to Resolve Immediately:</strong> Copy the contents of the generated <code className="bg-zinc-900 text-indigo-400 px-1.5 py-0.5 rounded font-bold font-mono">schema.sql</code> file in your project root, open your <strong>Supabase Dashboard SQL Editor</strong>, paste, and click <strong>Run</strong>. Everything will instantly connect!
+          {dbMismatches.length > 0 && (
+            <button
+              onClick={() => setShowDiagnosticsModal(true)}
+              className="flex items-center gap-1.5 bg-amber-500/10 hover:bg-amber-550 border border-amber-500/25 text-amber-450 px-2.5 py-1 rounded-xl text-[9px] font-bold uppercase tracking-wider cursor-pointer animate-pulse"
+            >
+              <AlertCircle className="w-3.5 h-3.5" />
+              <span>Warnings ({dbMismatches.length})</span>
+            </button>
+          )}
+        </div>
+      </Navbar>
+
+      {/* Diagnostics Warning popover modal dialog */}
+      {showDiagnosticsModal && (
+        <div className="fixed inset-0 bg-zinc-950/80 backdrop-blur-md z-50 flex items-center justify-center p-4">
+          <div className="bg-zinc-900 border-2 border-zinc-800 rounded-3xl max-w-xl w-full p-6 relative overflow-hidden shadow-2xl animate-in fade-in zoom-in-95 duration-150">
+            <button
+              onClick={() => setShowDiagnosticsModal(false)}
+              className="absolute top-4 right-4 p-1.5 hover:bg-zinc-800 rounded-lg text-zinc-400 hover:text-white cursor-pointer"
+            >
+              <X className="w-4 h-4" />
+            </button>
+
+            <div className="flex gap-3.5 items-start">
+              <div className="p-2.5 bg-amber-500/10 border border-amber-500/20 text-amber-400 rounded-xl">
+                <ShieldAlert className="w-6 h-6 animate-pulse" />
+              </div>
+              <div className="flex-1 space-y-2 text-left">
+                <h4 className="text-sm font-extrabold text-amber-400 tracking-wide uppercase">
+                  Supabase Database Schema Diagnostics
+                </h4>
+                <p className="text-[11px] text-zinc-400 leading-relaxed font-medium">
+                  Your cloud Supabase database tables are missing some schema elements required for live data synchronization:
                 </p>
-                <p className="text-[11px] text-emerald-400/90 font-semibold flex items-center gap-1.5">
-                  <span className="w-1.5 h-1.5 bg-emerald-500 rounded-full animate-ping" />
-                  <span>Interactive LocalStorage Offline-Redundancy is active so you can still test fully!</span>
-                </p>
+                <ul className="list-disc list-inside text-[10px] text-zinc-400 font-mono space-y-1 py-1">
+                  {dbMismatches.map((m, idx) => (
+                    <li key={idx} className="text-amber-300/85">{m}</li>
+                  ))}
+                </ul>
+                <div className="bg-zinc-950/60 border border-zinc-850 rounded-xl p-4 mt-3 space-y-2.5">
+                  <p className="text-[10px] text-zinc-400 leading-relaxed">
+                    💡 <strong>To Connect Fully:</strong> Copy the contents of the generated <code className="bg-zinc-900 text-indigo-400 px-1.5 py-0.5 rounded font-bold font-mono">schema.sql</code> script, paste it in your <strong>Supabase SQL Editor</strong>, and click <strong>Run</strong>.
+                  </p>
+                  <p className="text-[10px] text-emerald-450 font-bold flex items-center gap-1.5">
+                    <span className="w-1.5 h-1.5 bg-emerald-500 rounded-full animate-ping" />
+                    <span>Interactive LocalStorage Offline-Redundancy is currently handling operations.</span>
+                  </p>
+                </div>
               </div>
             </div>
           </div>
@@ -1166,22 +1302,25 @@ export default function AdminPage() {
                   </div>
 
                   {/* Product Price */}
-                  <div>
-                    <label className="block text-xs font-semibold text-zinc-400 uppercase tracking-wider mb-2">
-                      Base Price (₹ INR)
-                    </label>
-                    <input
-                      type="number"
-                      step="1"
-                      min="1"
-                      required
-                      disabled={uploading}
-                      value={price}
-                      onChange={(e) => setPrice(e.target.value)}
-                      placeholder="e.g. 3999"
-                      className="w-full bg-zinc-950/80 border border-zinc-800 rounded-lg px-3.5 py-2 text-sm text-white placeholder-zinc-600 focus:outline-none focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500"
-                    />
-                  </div>
+                  {/* Product Price */}
+                  {!isTemplate && (
+                    <div>
+                      <label className="block text-xs font-semibold text-zinc-400 uppercase tracking-wider mb-2">
+                        Base Price (₹ INR)
+                      </label>
+                      <input
+                        type="number"
+                        step="1"
+                        min="1"
+                        required={!isTemplate}
+                        disabled={uploading}
+                        value={price}
+                        onChange={(e) => setPrice(e.target.value)}
+                        placeholder="e.g. 3999"
+                        className="w-full bg-zinc-950/80 border border-zinc-800 rounded-lg px-3.5 py-2 text-sm text-white placeholder-zinc-600 focus:outline-none focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500"
+                      />
+                    </div>
+                  )}
 
                   {/* Product Category Selector */}
                   <div>
@@ -1201,35 +1340,98 @@ export default function AdminPage() {
                     </select>
                   </div>
 
-                  {/* GLB File */}
+                  {/* Product Type Selector */}
                   <div>
                     <label className="block text-xs font-semibold text-zinc-400 uppercase tracking-wider mb-2">
-                      3D Model (.glb)
+                       Product Type
                     </label>
-                    <div className="relative border border-dashed border-zinc-800 rounded-lg p-3 bg-zinc-950/40 hover:bg-zinc-950/60 transition-colors">
-                      <input
-                        id="glb-input"
-                        type="file"
-                        required
-                        disabled={uploading}
-                        accept=".glb"
-                        onChange={handleGlbChange}
-                        className="absolute inset-0 w-full h-full opacity-0 cursor-pointer disabled:cursor-not-allowed"
-                      />
-                      <div className="flex flex-col items-center justify-center py-2 text-center">
-                        <Layers className={`w-6 h-6 mb-2 ${glbFile ? "text-indigo-400" : "text-zinc-500"}`} />
-                        <p className="text-xs font-medium">
-                          {glbFile ? glbFile.name : "Click to select GLB"}
-                        </p>
-                        <p className="text-[10px] text-zinc-600 mt-1">Accepts only .glb files</p>
-                      </div>
-                    </div>
+                    <select
+                      disabled={uploading}
+                      value={isTemplate ? "template" : "standard"}
+                      onChange={(e) => setIsTemplate(e.target.value === "template")}
+                      className="w-full bg-zinc-950/80 border border-zinc-800 rounded-lg px-3.5 py-2 text-sm text-white focus:outline-none focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500 cursor-pointer"
+                    >
+                      <option value="standard">Standard Catalog Product</option>
+                      <option value="template">3D Configurator Template Model</option>
+                    </select>
                   </div>
 
-                  {/* Texture File */}
+                  {/* Product Description */}
+                  {!isTemplate && (
+                    <div className="sm:col-span-2">
+                      <label className="block text-xs font-semibold text-zinc-400 uppercase tracking-wider mb-2">
+                        Product Description
+                      </label>
+                      <textarea
+                        disabled={uploading}
+                        value={description}
+                        onChange={(e) => setDescription(e.target.value)}
+                        placeholder="Enter detailed description of the product garment (material care, style advice)..."
+                        rows="3"
+                        className="w-full bg-zinc-950/80 border border-zinc-800 rounded-lg px-3.5 py-2 text-sm text-white placeholder-zinc-600 focus:outline-none focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500 resize-y"
+                      />
+                    </div>
+                  )}
+
+                  {/* Gallery Images (Multiple) */}
+                  {!isTemplate && (
+                    <div className="sm:col-span-2">
+                      <label className="block text-xs font-semibold text-zinc-400 uppercase tracking-wider mb-2">
+                        Gallery Photos (Multiple)
+                      </label>
+                      <div className="relative border border-dashed border-zinc-800 rounded-lg p-3.5 bg-zinc-950/40 hover:bg-zinc-950/60 transition-colors">
+                        <input
+                          id="gallery-input"
+                          type="file"
+                          multiple
+                          disabled={uploading}
+                          accept="image/*"
+                          onChange={handleGalleryChange}
+                          className="absolute inset-0 w-full h-full opacity-0 cursor-pointer"
+                        />
+                        <div className="flex flex-col items-center justify-center py-2 text-center select-none">
+                          <ImageIcon className={`w-6 h-6 mb-2 ${galleryFiles.length > 0 ? "text-indigo-400" : "text-zinc-500"}`} />
+                          <p className="text-xs font-medium">
+                            {galleryFiles.length > 0 ? `${galleryFiles.length} images selected` : "Select gallery photos"}
+                          </p>
+                          <p className="text-[10px] text-zinc-600 mt-1">PNG, JPG up to 5 files</p>
+                        </div>
+                      </div>
+                    </div>
+                  )}
+
+                  {/* Conditionally render GLB upload box for templates. Ready-made standard catalog products require no GLB upload or templates dropdown selector. */}
+                  {isTemplate && (
+                    /* GLB File Upload (Mesh Template mode) */
+                    <div>
+                      <label className="block text-xs font-semibold text-zinc-400 uppercase tracking-wider mb-2">
+                        3D Mesh Template (.glb)
+                      </label>
+                      <div className="relative border border-dashed border-zinc-800 rounded-lg p-3 bg-zinc-950/40 hover:bg-zinc-950/60 transition-colors">
+                        <input
+                          id="glb-input"
+                          type="file"
+                          required={isTemplate}
+                          disabled={uploading}
+                          accept=".glb"
+                          onChange={handleGlbChange}
+                          className="absolute inset-0 w-full h-full opacity-0 cursor-pointer disabled:cursor-not-allowed"
+                        />
+                        <div className="flex flex-col items-center justify-center py-2 text-center">
+                          <Layers className={`w-6 h-6 mb-2 ${glbFile ? "text-indigo-400" : "text-zinc-500"}`} />
+                          <p className="text-xs font-medium">
+                            {glbFile ? glbFile.name : "Select Mesh GLB File"}
+                          </p>
+                          <p className="text-[10px] text-zinc-600 mt-1">Stitch canvas template mesh geometry</p>
+                        </div>
+                      </div>
+                    </div>
+                  )}
+
+                  {/* Texture File or Main Display Photo (Always required) */}
                   <div>
                     <label className="block text-xs font-semibold text-zinc-400 uppercase tracking-wider mb-2">
-                      Base Texture (Image)
+                      {isTemplate ? "3D Mesh Default Texture Map" : "Main Display Photo"}
                     </label>
                     <div className="relative border border-dashed border-zinc-800 rounded-lg p-3 bg-zinc-950/40 hover:bg-zinc-950/60 transition-colors">
                       <input
@@ -1244,7 +1446,7 @@ export default function AdminPage() {
                       <div className="flex flex-col items-center justify-center py-2 text-center">
                         <ImageIcon className={`w-6 h-6 mb-2 ${textureFile ? "text-indigo-400" : "text-zinc-500"}`} />
                         <p className="text-xs font-medium">
-                          {textureFile ? textureFile.name : "Click to select image"}
+                          {textureFile ? textureFile.name : (isTemplate ? "Select Texture / Graphic Image" : "Select Main Product Photo")}
                         </p>
                         <p className="text-[10px] text-zinc-600 mt-1">PNG, JPG, SVG up to 5MB</p>
                       </div>
@@ -1276,12 +1478,38 @@ export default function AdminPage() {
             {/* Right/List Section */}
             <div className="md:col-span-2 space-y-6">
               <div className="bg-zinc-900/20 border border-zinc-900 rounded-xl p-6">
-                <div className="flex items-center justify-between mb-6">
-                  <div className="flex items-center gap-2.5">
-                    <div className="p-1.5 bg-emerald-500/10 rounded-md text-emerald-400">
-                      <Package className="w-5 h-5" />
+                <div className="flex flex-col gap-4 mb-6">
+                  <div className="flex items-center justify-between">
+                    <div className="flex items-center gap-2.5">
+                      <div className="p-1.5 bg-emerald-500/10 rounded-md text-emerald-400">
+                        <Package className="w-5 h-5" />
+                      </div>
+                      <h3 className="text-base font-semibold">Active Inventory</h3>
                     </div>
-                    <h3 className="text-base font-semibold">Active Inventory ({products.length})</h3>
+                  </div>
+                  
+                  {/* Inventory Sub-Tabs */}
+                  <div className="bg-zinc-950/60 border border-zinc-800 rounded-lg p-1 flex">
+                    <button
+                      onClick={() => setAdminInventorySubTab("standard")}
+                      className={`flex-1 text-center py-1.5 rounded text-xs font-bold transition-all cursor-pointer ${
+                        adminInventorySubTab === "standard"
+                          ? "bg-indigo-600 text-white shadow"
+                          : "text-zinc-500 hover:text-zinc-350"
+                      }`}
+                    >
+                      Standard Catalog Products
+                    </button>
+                    <button
+                      onClick={() => setAdminInventorySubTab("template")}
+                      className={`flex-1 text-center py-1.5 rounded text-xs font-bold transition-all cursor-pointer ${
+                        adminInventorySubTab === "template"
+                          ? "bg-indigo-600 text-white shadow"
+                          : "text-zinc-500 hover:text-zinc-355"
+                      }`}
+                    >
+                      3D Customizer Templates
+                    </button>
                   </div>
                 </div>
 
@@ -1290,15 +1518,20 @@ export default function AdminPage() {
                     <Loader2 className="w-6 h-6 animate-spin text-zinc-400 mb-2" />
                     <p className="text-xs">Loading items from database...</p>
                   </div>
-                ) : products.length === 0 ? (
-                  <div className="py-16 text-center border border-dashed border-zinc-800/80 rounded-lg bg-zinc-950/20">
+                ) : products.filter(p => {
+                    const isTemp = isTemplateProduct(p);
+                    return adminInventorySubTab === "template" ? isTemp : !isTemp;
+                  }).length === 0 ? (
+                  <div className="py-16 text-center border border-dashed border-zinc-800/80 rounded-lg bg-zinc-950/20 select-none">
                     <Package className="w-10 h-10 mx-auto text-zinc-700 mb-3" />
-                    <p className="text-sm text-zinc-500">No apparel items created yet.</p>
-                    <p className="text-xs text-zinc-600 mt-1">Upload a model to initialize the gallery.</p>
+                    <p className="text-xs text-zinc-500 font-semibold">No {adminInventorySubTab === "template" ? "customizer templates" : "catalog items"} found here.</p>
                   </div>
                 ) : (
                   <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-                    {products.map((product) => (
+                    {products.filter(p => {
+                      const isTemp = isTemplateProduct(p);
+                      return adminInventorySubTab === "template" ? isTemp : !isTemp;
+                    }).map((product) => (
                       <div 
                         key={product.id}
                         className="bg-zinc-900/60 border border-zinc-800/80 hover:border-zinc-700 rounded-xl p-4 transition-all flex flex-col justify-between group shadow-sm min-h-[220px]"
@@ -1340,6 +1573,35 @@ export default function AdminPage() {
                                   <option value="activewear">Activewear</option>
                                 </select>
                               </div>
+                              <div>
+                                  <label className="block text-[9px] font-bold text-zinc-500 uppercase tracking-widest mb-1 select-none">Product Type</label>
+                                  <select 
+                                    value={editIsTemplate ? "template" : "standard"}
+                                    onChange={(e) => setEditIsTemplate(e.target.value === "template")}
+                                    className="w-full bg-zinc-950 border border-zinc-800 rounded px-2.5 py-1.5 text-xs text-white focus:outline-none focus:border-indigo-500 cursor-pointer"
+                                  >
+                                    <option value="standard">Standard Catalog Product</option>
+                                    <option value="template">3D Customizer Template</option>
+                                  </select>
+                                </div>
+                                <div>
+                                  <label className="block text-[9px] font-bold text-zinc-500 uppercase tracking-widest mb-1 select-none">Description</label>
+                                  <textarea 
+                                    value={editDescription}
+                                    onChange={(e) => setEditDescription(e.target.value)}
+                                    rows="2"
+                                    className="w-full bg-zinc-950 border border-zinc-800 rounded px-2.5 py-1.5 text-xs text-white focus:outline-none focus:border-indigo-500 resize-y"
+                                  />
+                                </div>
+                                <div>
+                                  <label className="block text-[9px] font-bold text-zinc-500 uppercase tracking-widest mb-1 select-none">Gallery Image URLs (comma-separated)</label>
+                                  <input 
+                                    type="text"
+                                    value={editGalleryUrls}
+                                    onChange={(e) => setEditGalleryUrls(e.target.value)}
+                                    className="w-full bg-zinc-950 border border-zinc-800 rounded px-2.5 py-1.5 text-xs text-white focus:outline-none focus:border-indigo-550"
+                                  />
+                                </div>
                             </div>
                             <div className="flex items-center gap-2 mt-4 pt-2 border-t border-zinc-800/50">
                               <button
@@ -1405,6 +1667,9 @@ export default function AdminPage() {
                                     setEditName(product.name);
                                     setEditPrice(product.price ? String(product.price) : "3999");
                                     setEditCategory(product.category || "t-shirt");
+                                    setEditDescription(product.description || "");
+                                    setEditGalleryUrls(product.gallery_urls || "");
+                                    setEditIsTemplate(isTemplateProduct(product));
                                   }}
                                   className="p-1.5 bg-zinc-950 hover:bg-indigo-500/10 border border-zinc-800 hover:border-indigo-500/30 text-zinc-500 hover:text-indigo-400 rounded-md transition-colors cursor-pointer"
                                   title="Edit product"
@@ -1421,7 +1686,7 @@ export default function AdminPage() {
                                 </button>
 
                                 <Link
-                                  href={`/?product=${getSlug(product.name)}`}
+                                  href={`/studio?product=${getSlug(product.name)}`}
                                   className="p-1.5 bg-indigo-500/10 border border-indigo-500/20 hover:bg-indigo-500 hover:text-white text-indigo-400 rounded-md transition-colors flex items-center justify-center"
                                   title="Open in studio"
                                 >

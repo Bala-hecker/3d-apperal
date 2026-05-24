@@ -1,1562 +1,481 @@
 "use client";
 
-import React, { useState, useEffect, useRef } from "react";
-import { useRouter } from "next/navigation";
-import { saveDesignData } from "@/lib/indexedDb";
-import { supabase } from "@/lib/supabase";
-import {
-  Sparkles,
-  Layers,
-  Settings,
-  Type,
-  Square,
-  Circle,
-  Paintbrush,
-  Image as ImageIcon,
-  Trash2,
-  ZoomIn,
-  ZoomOut,
-  Undo2,
-  Redo2,
-  Loader2,
-  LogOut,
-  Sliders,
-  ChevronRight,
-  RefreshCw,
-  Plus
-} from "lucide-react";
+import React, { useState, useEffect } from "react";
 import Link from "next/link";
-import * as THREE from "three";
-import { GLTFLoader } from "three/examples/jsm/loaders/GLTFLoader.js";
-import { OrbitControls } from "three/examples/jsm/controls/OrbitControls.js";
+import { supabase } from "@/lib/supabase";
+import Navbar from "@/components/Navbar";
+import { 
+  Sparkles, 
+  Layers, 
+  Paintbrush, 
+  Sliders, 
+  ShieldCheck, 
+  ArrowRight, 
+  ShoppingBag, 
+  Cpu, 
+  MousePointerClick,
+  CheckCircle
+} from "lucide-react";
 
-const getSlug = (name) => {
-  return (name || "")
-    .toLowerCase()
-    .trim()
-    .replace(/[^a-z0-9]+/g, "-")
-    .replace(/(^-|-$)/g, "");
-};
-
-const createProceduralFabricTexture = (fabricType) => {
-  if (typeof window === "undefined") return null;
-  const canvas = document.createElement("canvas");
-  canvas.width = 128;
-  canvas.height = 128;
-  const ctx = canvas.getContext("2d");
-  
-  // Fill with neutral grey bump background
-  ctx.fillStyle = "#808080";
-  ctx.fillRect(0, 0, 128, 128);
-  
-  if (fabricType === "cotton") {
-    // Coarse organic grid weave pattern
-    ctx.strokeStyle = "#909090";
-    ctx.lineWidth = 1.2;
-    for (let i = 0; i < 128; i += 4) {
-      ctx.beginPath();
-      ctx.moveTo(0, i);
-      ctx.lineTo(128, i);
-      ctx.stroke();
-      
-      ctx.beginPath();
-      ctx.moveTo(i, 0);
-      ctx.lineTo(i, 128);
-      ctx.stroke();
-    }
-  } else if (fabricType === "polyester") {
-    // Tight fine athletic mesh diagonal weave
-    ctx.strokeStyle = "#888888";
-    ctx.lineWidth = 0.8;
-    for (let i = -128; i < 128; i += 3) {
-      ctx.beginPath();
-      ctx.moveTo(i, 0);
-      ctx.lineTo(i + 128, 128);
-      ctx.stroke();
-    }
-  } else if (fabricType === "fleece") {
-    // Soft noise fleece pile/nap grain
-    for (let x = 0; x < 128; x++) {
-      for (let y = 0; y < 128; y++) {
-        const val = Math.floor(128 + (Math.random() - 0.5) * 25);
-        ctx.fillStyle = `rgb(${val},${val},${val})`;
-        ctx.fillRect(x, y, 1, 1);
-      }
-    }
-  }
-  
-  const texture = new THREE.CanvasTexture(canvas);
-  texture.wrapS = THREE.RepeatWrapping;
-  texture.wrapT = THREE.RepeatWrapping;
-  texture.repeat.set(45, 45); 
-  return texture;
-};
-
-export default function StudioPage() {
-  const router = useRouter();
-  
-  // Auth state
+export default function HomeLandingPage() {
   const [session, setSession] = useState(null);
-  const [checkingAuth, setCheckingAuth] = useState(true);
+  const [selectedFabric, setSelectedFabric] = useState("cotton");
+  const [featuredProducts, setFeaturedProducts] = useState([]);
+  const [loadingFeatured, setLoadingFeatured] = useState(true);
 
-  // Products state
-  const [products, setProducts] = useState([]);
-  const [activeProduct, setActiveProduct] = useState(null);
-  const [loadingProducts, setLoadingProducts] = useState(true);
-
-  // Canvas / Studio references
-  const fabricCanvasRef = useRef(null);
-  const fabricCanvasElRef = useRef(null);
-  const threeContainerRef = useRef(null);
-  
-  // Three.js state/refs
-  const sceneRef = useRef(null);
-  const rendererRef = useRef(null);
-  const modelRef = useRef(null);
-  const textureRef = useRef(null);
-  const hiddenCanvasRef = useRef(null);
-  const animateFrameIdRef = useRef(null);
-  const hasInitializedThreeRef = useRef(false);
-  const hasInitializedFabricRef = useRef(false);
-  
-  // Studio UI Control State
-  const [activeTab, setActiveTab] = useState("presets"); // presets, text, graphics, draw
-  const [fillColor, setFillColor] = useState("#4f46e5");
-  const [textColor, setTextColor] = useState("#ffffff");
-  const [isDrawing, setIsDrawing] = useState(false);
-  const [zoomLevel, setZoomLevel] = useState(1);
-  const [canvasHistory, setCanvasHistory] = useState([]);
-  const [historyIndex, setHistoryIndex] = useState(-1);
-  const [isLoadingModel, setIsLoadingModel] = useState(false);
-  const [isThreeReady, setIsThreeReady] = useState(false);
-  const [isFabricReady, setIsFabricReady] = useState(false);
-  const [garmentColor, setGarmentColor] = useState("#ffffff");
-  const [selectedObjectType, setSelectedObjectType] = useState(null);
-  
-  // Custom Premium Fabric Selection state tokens
-  const [selectedFabric, setSelectedFabric] = useState("cotton"); // cotton, polyester, fleece
-  const fabricProperties = {
-    cotton: { roughness: 0.85, metalness: 0.1, upcharge: 0, label: "Matte Organic Cotton", bumpScale: 0.04 },
-    polyester: { roughness: 0.25, metalness: 0.45, upcharge: 999, label: "Shiny Athletic Polyester", bumpScale: 0.02 },
-    fleece: { roughness: 1.0, metalness: 0.05, upcharge: 1299, label: "Heavy Luxury Fleece", bumpScale: 0.06 }
-  };
-
-  // Three.js Light References and Environment State
-  const [lightingPreset, setLightingPreset] = useState("studio"); // studio, showroom, sunset
-  const ambientLightRef = useRef(null);
-  const dirLight1Ref = useRef(null);
-  const dirLight2Ref = useRef(null);
-
-  // 1. Auth and Products Fetching
   useEffect(() => {
-    const checkAuthAndFetch = async () => {
-      const { data: { session: currentSession } } = await supabase.auth.getSession();
-      if (!currentSession) {
-        router.push("/auth");
-      } else {
-        setSession(currentSession);
-        setCheckingAuth(false);
-        await fetchProducts();
-      }
-    };
-    checkAuthAndFetch();
+    supabase.auth.getSession().then(({ data: { session: currentSession } }) => {
+      setSession(currentSession);
+    });
 
     const { data: { subscription } } = supabase.auth.onAuthStateChange((_event, newSession) => {
-      if (!newSession) {
-        router.push("/auth");
-      } else {
-        setSession(newSession);
-        setCheckingAuth(false);
-      }
+      setSession(newSession);
     });
+
+    // Fetch featured catalog products (non-templates)
+    const fetchFeatured = async () => {
+      try {
+        const { data } = await supabase
+          .from("products")
+          .select("id, name, price, texture_url, category, gallery_urls, glb_file_url")
+          .is("glb_file_url", null)
+          .eq("is_template", false)
+          .order("created_at", { ascending: false })
+          .limit(4);
+        if (data && data.length > 0) {
+          setFeaturedProducts(data);
+        }
+      } catch {}
+      finally { setLoadingFeatured(false); }
+    };
+    fetchFeatured();
 
     return () => subscription.unsubscribe();
-  }, [router]);
-
-  const fetchProducts = async () => {
-    setLoadingProducts(true);
-    try {
-      const { data, error } = await supabase
-        .from("products")
-        .select("*")
-        .order("created_at", { ascending: false });
-      
-      if (error) throw error;
-      
-      setProducts(data || []);
-      if (data && data.length > 0) {
-        const params = new URLSearchParams(window.location.search);
-        const urlProductId = (params.get("product") || "").toLowerCase().trim();
-        const selectedProduct = data.find(p => p.id === urlProductId || getSlug(p.name) === urlProductId) || data[0];
-        setActiveProduct(selectedProduct);
-      }
-    } catch (err) {
-      console.error("Error fetching products:", err.message);
-    } finally {
-      setLoadingProducts(false);
-    }
-  };
-
-  // 2. Initialize Fabric.js (Initialized EXACTLY ONCE, completely decoupled from focus re-renders to prevent canvas clears)
-  useEffect(() => {
-    if (checkingAuth || !session) return;
-    if (hasInitializedFabricRef.current) return; // Prevent any double-runs or focus-induced clears!
-
-    hasInitializedFabricRef.current = true;
-
-    // Dynamically load fabric on the client side
-    import("fabric").then((fabricModule) => {
-      const fabric = fabricModule.fabric;
-      
-      // Initialize Fabric Canvas with Premium Grab Cursors
-      const canvas = new fabric.Canvas("fabric-canvas", {
-        width: 512,
-        height: 512,
-        backgroundColor: "#ffffff",
-        preserveObjectStacking: true,
-        hoverCursor: "grab",
-        moveCursor: "grabbing",
-        freeDrawingCursor: "crosshair",
-      });
-
-      fabricCanvasRef.current = canvas;
-
-      // Event listener to record history on modifications
-      const saveState = () => {
-        if (!canvas) return;
-        const json = JSON.stringify(canvas.toJSON());
-        setCanvasHistory((prev) => {
-          const updated = prev.slice(0, historyIndex + 1);
-          return [...updated, json];
-        });
-        setHistoryIndex((prev) => prev + 1);
-      };
-
-      canvas.on("object:added", saveState);
-      canvas.on("object:modified", saveState);
-      canvas.on("object:removed", saveState);
-
-      // Keep selectedObjectType in sync for rendering custom scaling buttons
-      canvas.on("selection:created", (e) => {
-        const obj = e.selected?.[0];
-        setSelectedObjectType(obj ? obj.type : null);
-      });
-      canvas.on("selection:updated", (e) => {
-        const obj = e.selected?.[0];
-        setSelectedObjectType(obj ? obj.type : null);
-      });
-      canvas.on("selection:cleared", () => {
-        setSelectedObjectType(null);
-      });
-
-      // Explicit hover cursor sync to guarantee the move/grab hand shows up
-      canvas.on("mouse:over", (e) => {
-        if (e.target && !canvas.isDrawingMode) {
-          canvas.setCursor("grab");
-        }
-      });
-      canvas.on("mouse:down", (e) => {
-        if (e.target && !canvas.isDrawingMode) {
-          canvas.setCursor("grabbing");
-        }
-      });
-      canvas.on("mouse:up", () => {
-        if (!canvas.isDrawingMode) {
-          canvas.setCursor("default");
-        }
-      });
-
-      // Performance Optimization: Update 3D canvas texture only when Fabric renders
-      canvas.on("after:render", () => {
-        updateHiddenCanvas();
-        if (textureRef.current) {
-          textureRef.current.needsUpdate = true;
-        }
-      });
-
-      // Save initial empty state
-      const initialJson = JSON.stringify(canvas.toJSON());
-      setCanvasHistory([initialJson]);
-      setHistoryIndex(0);
-      setIsFabricReady(true); // Signal Fabric canvas is fully initialized!
-    });
-  }, [checkingAuth, session]);
-
-  // 2c. Handle actual unmount cleanup exactly once for Fabric canvas
-  useEffect(() => {
-    return () => {
-      if (fabricCanvasRef.current) {
-        fabricCanvasRef.current.dispose();
-        fabricCanvasRef.current = null;
-      }
-      setIsFabricReady(false);
-      hasInitializedFabricRef.current = false;
-    };
   }, []);
 
-  // 2b. Automatically disable drawing mode and restore selection/movability when switching tabs
-  useEffect(() => {
-    const canvas = fabricCanvasRef.current;
-    if (!canvas) return;
-
-    if (activeTab !== "draw") {
-      canvas.isDrawingMode = false;
-      setIsDrawing(false);
-      
-      // Explicitly restore grab hover states and grab pointers on all decals/texts
-      canvas.forEachObject((obj) => {
-        if (obj !== canvas.backgroundImage) {
-          obj.set({
-            selectable: true,
-            evented: true,
-          });
-        }
-      });
-      canvas.renderAll();
-    }
-  }, [activeTab]);
-
-  // 2d. Helper to update the offline flipped canvas for Three.js texture rendering
-  const updateHiddenCanvas = () => {
-    try {
-      const canvas = fabricCanvasRef.current;
-      if (!canvas) {
-        console.log("updateHiddenCanvas: No fabricCanvasRef.current");
-        return;
-      }
-      if (!hiddenCanvasRef.current) {
-        console.log("updateHiddenCanvas: No hiddenCanvasRef.current");
-        return;
-      }
-      
-      const fabricCanvasEl = canvas.getElement();
-      if (!fabricCanvasEl) {
-        console.log("updateHiddenCanvas: No fabricCanvasEl");
-        return;
-      }
-      
-      const w = 512;
-      const h = 512;
-      
-      const hiddenCanvas = hiddenCanvasRef.current;
-      if (hiddenCanvas.width !== w || hiddenCanvas.height !== h) {
-        hiddenCanvas.width = w;
-        hiddenCanvas.height = h;
-      }
-      
-      const ctx = hiddenCanvas.getContext("2d");
-      if (!ctx) {
-        console.log("updateHiddenCanvas: No ctx");
-        return;
-      }
-      
-      ctx.clearRect(0, 0, w, h);
-      
-      const halfW = w / 2;
-      
-      console.log("updateHiddenCanvas: Drawing texture...", {
-        fabricWidth: fabricCanvasEl.width,
-        fabricHeight: fabricCanvasEl.height,
-        destHalfW: halfW,
-        destH: h
-      });
-
-      // Draw Left Half (Front) Flipped Horizontally & Vertically (Destination is Left Half)
-      ctx.save();
-      ctx.translate(halfW / 2, h / 2);
-      ctx.scale(1, -1);
-      ctx.drawImage(fabricCanvasEl, 0, 0, fabricCanvasEl.width / 2, fabricCanvasEl.height, -halfW / 2, -h / 2, halfW, h);
-      ctx.restore();
-      
-      // Draw Right Half (Back) Flipped Horizontally & Vertically (Destination is Right Half)
-      ctx.save();
-      ctx.translate(halfW + halfW / 2, h / 2);
-      ctx.scale(1, -1);
-      ctx.drawImage(fabricCanvasEl, fabricCanvasEl.width / 2, 0, fabricCanvasEl.width / 2, fabricCanvasEl.height, -halfW / 2, -h / 2, halfW, h);
-      ctx.restore();
-    } catch (e) {
-      console.error("Error in updateHiddenCanvas:", e);
+  const fabrics = {
+    cotton: {
+      name: "Matte Organic Cotton",
+      roughness: "0.85 (High matte)",
+      metalness: "0.10 (Non-metallic)",
+      upcharge: "₹0 (Included)",
+      description: "100% organic cotton weave. Offers a classic matte finish, exceptional comfort, and a relaxed everyday drape. Perfect for high-density graphic print overlays.",
+      rating: 95
+    },
+    polyester: {
+      name: "Shiny Athletic Polyester",
+      roughness: "0.25 (High gloss)",
+      metalness: "0.45 (Semi-metallic)",
+      upcharge: "+₹999",
+      description: "High-performance synthetic athletic mesh. Features high luster, light reflection, moisture-wicking characteristics, and a sleek modern sheen.",
+      rating: 88
+    },
+    fleece: {
+      name: "Heavy Luxury Fleece",
+      roughness: "1.00 (Pure matte)",
+      metalness: "0.05 (Organic structure)",
+      upcharge: "+₹1,299",
+      description: "Ultra-heavyweight designer fleece pile. Offers premium insulation, maximum structure retention, and a luxurious brushed pile finish that feels incredibly soft.",
+      rating: 99
     }
   };
 
-  // 3. Initialize Three.js Scene (Initialized EXACTLY ONCE, completely decoupled from focus re-renders to prevent WebGL Context Loss)
-  useEffect(() => {
-    if (checkingAuth || !session || !threeContainerRef.current) return;
-    if (hasInitializedThreeRef.current) return; // Prevent any double-runs or focus-induced updates!
-
-    hasInitializedThreeRef.current = true;
-
-    const width = threeContainerRef.current.clientWidth;
-    const height = threeContainerRef.current.clientHeight;
-
-    // A. Scene Setup
-    const scene = new THREE.Scene();
-    sceneRef.current = scene;
-
-    // B. Camera Setup
-    const camera = new THREE.PerspectiveCamera(45, width / height, 0.1, 100);
-    camera.position.set(0, 0.35, 2.3);
-
-    // C. Renderer Setup
-    const renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true });
-    renderer.setSize(width, height);
-    renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
-    renderer.shadowMap.enabled = true;
-    renderer.shadowMap.type = THREE.PCFSoftShadowMap;
-    rendererRef.current = renderer;
-
-    // Clear previous children
-    threeContainerRef.current.innerHTML = "";
-    threeContainerRef.current.appendChild(renderer.domElement);
-
-    // D. Lighting
-    const ambientLight = new THREE.AmbientLight(0xffffff, 0.65);
-    scene.add(ambientLight);
-    ambientLightRef.current = ambientLight;
-
-    const dirLight1 = new THREE.DirectionalLight(0xffffff, 0.8);
-    dirLight1.position.set(2, 4, 3);
-    dirLight1.castShadow = true;
-    dirLight1.shadow.mapSize.width = 1024;
-    dirLight1.shadow.mapSize.height = 1024;
-    scene.add(dirLight1);
-    dirLight1Ref.current = dirLight1;
-
-    const dirLight2 = new THREE.DirectionalLight(0xa5b4fc, 0.4); // soft purple rim light
-    dirLight2.position.set(-2, -2, -3);
-    scene.add(dirLight2);
-    dirLight2Ref.current = dirLight2;
-
-    // E. Controls
-    const controls = new OrbitControls(camera, renderer.domElement);
-    controls.enableDamping = true;
-    controls.dampingFactor = 0.05;
-    controls.maxDistance = 10;
-    controls.minDistance = 1;
-    controls.target.set(0, 0.35, 0);
-
-    // F. Canvas Texture creation from Fabric element
-    const fabricCanvasEl = document.getElementById("fabric-canvas");
-    let canvasTexture = null;
-
-    if (fabricCanvasEl) {
-      // Initialize offline flipping canvas
-      const hiddenCanvas = document.createElement("canvas");
-      hiddenCanvas.width = 512;
-      hiddenCanvas.height = 512;
-      hiddenCanvasRef.current = hiddenCanvas;
-      
-      // Perform initial flip mapping
-      updateHiddenCanvas();
-
-      canvasTexture = new THREE.CanvasTexture(hiddenCanvas);
-      canvasTexture.colorSpace = THREE.SRGBColorSpace;
-      canvasTexture.flipY = false; // Match the standard UV space
-      textureRef.current = canvasTexture;
-      setIsThreeReady(true);
+  const steps = [
+    {
+      icon: <MousePointerClick className="w-5 h-5 text-indigo-400" />,
+      title: "1. Select Base Mesh",
+      desc: "Choose from our designer library of blanks—including raw-hem tees, oversized hoodies, utility jackets, and activewear mesh."
+    },
+    {
+      icon: <Paintbrush className="w-5 h-5 text-purple-400" />,
+      title: "2. Overlay Graphics & Text",
+      desc: "Upload custom transparent decals, configure text layers with premium typography, or paint freehand brush strokes directly."
+    },
+    {
+      icon: <Sliders className="w-5 h-5 text-pink-400" />,
+      title: "3. Choose Premium Fabric",
+      desc: "Simulate fabric weave properties in real-time, toggle studio environment lights, and select sizing guides for tailored precision."
+    },
+    {
+      icon: <ShoppingBag className="w-5 h-5 text-emerald-400" />,
+      title: "4. Checkout & Fabricate",
+      desc: "Place your order securely via Stripe or local UPI. Your design package is zipped with vectors and sent to physical printing."
     }
-
-    // G. Animation loop
-    const animate = () => {
-      controls.update();
-
-      renderer.render(scene, camera);
-      animateFrameIdRef.current = requestAnimationFrame(animate);
-    };
-    animate();
-
-    // H. Handle Resize
-    const handleResize = () => {
-      if (!threeContainerRef.current || !rendererRef.current) return;
-      const w = threeContainerRef.current.clientWidth;
-      const h = threeContainerRef.current.clientHeight;
-      camera.aspect = w / h;
-      camera.updateProjectionMatrix();
-      rendererRef.current.setSize(w, h);
-    };
-    window.addEventListener("resize", handleResize);
-  }, [checkingAuth, session]);
-
-  // 3b. Handle actual unmount cleanup exactly once
-  useEffect(() => {
-    return () => {
-      if (animateFrameIdRef.current) {
-        cancelAnimationFrame(animateFrameIdRef.current);
-      }
-      if (rendererRef.current) {
-        rendererRef.current.dispose();
-        rendererRef.current = null;
-      }
-      setIsThreeReady(false);
-      hasInitializedThreeRef.current = false;
-    };
-  }, []);
-
-  // 3c. Dynamic Environment Showroom Lighting Controller
-  useEffect(() => {
-    const ambient = ambientLightRef.current;
-    const dir1 = dirLight1Ref.current;
-    const dir2 = dirLight2Ref.current;
-    if (!ambient || !dir1 || !dir2) return;
-
-    if (lightingPreset === "studio") {
-      // Clean, bright neutral studio white lights
-      ambient.color.set("#ffffff");
-      ambient.intensity = 0.65;
-      dir1.color.set("#ffffff");
-      dir1.intensity = 0.8;
-      dir1.position.set(2, 4, 3);
-      dir2.color.set("#a5b4fc"); // soft lavender
-      dir2.intensity = 0.4;
-    } else if (lightingPreset === "showroom") {
-      // Warm, rich diffuse boutique showcase lighting
-      ambient.color.set("#ffedd5"); // soft orange/warm cream tint
-      ambient.intensity = 0.85;
-      dir1.color.set("#fde047"); // gold accent key
-      dir1.intensity = 0.55;
-      dir1.position.set(3, 3, 1);
-      dir2.color.set("#e0e7ff"); // neutral light fill
-      dir2.intensity = 0.3;
-    } else if (lightingPreset === "sunset") {
-      // High-contrast dramatic outdoor golden hour Sunset
-      ambient.color.set("#fee2e2"); // rose tint ambient
-      ambient.intensity = 0.4;
-      dir1.color.set("#f97316"); // bright deep amber sun key
-      dir1.intensity = 1.6;
-      dir1.position.set(4, 2.5, 4);
-      dir2.color.set("#6366f1"); // deep purple/indigo ground bounce reflection
-      dir2.intensity = 0.85;
-    }
-  }, [lightingPreset, isThreeReady]);
-
-  // 3d. Watch selectedFabric changes and update active model materials dynamically in real-time
-  useEffect(() => {
-    if (!modelRef.current) return;
-    const props = fabricProperties[selectedFabric] || fabricProperties.cotton;
-    const weaveTexture = createProceduralFabricTexture(selectedFabric);
-    
-    modelRef.current.traverse((node) => {
-      if (node.isMesh && node.material) {
-        node.material.roughness = props.roughness;
-        node.material.metalness = props.metalness;
-        node.material.bumpMap = weaveTexture;
-        node.material.bumpScale = props.bumpScale || 0.03;
-        node.material.needsUpdate = true;
-      }
-    });
-  }, [selectedFabric]);
-
-  // 4. Watch activeProduct state and load .glb and base texture
-  useEffect(() => {
-    if (!isThreeReady || !isFabricReady || !activeProduct) return;
-
-    const canvas = fabricCanvasRef.current;
-    const scene = sceneRef.current;
-    const texture = textureRef.current;
-    if (!canvas || !scene || !texture) return;
-
-    setIsLoadingModel(true);
-
-    // A. Load and apply base texture to Fabric canvas with premium multiply blending
-    import("fabric").then((fabricModule) => {
-      const fabric = fabricModule.fabric;
-      
-      canvas.setBackgroundColor(garmentColor, () => {
-        fabric.Image.fromURL(
-          activeProduct.texture_url,
-          (img) => {
-            if (!img) return;
-            img.set({
-              scaleX: canvas.width / img.width,
-              scaleY: canvas.height / img.height,
-              selectable: false,
-              evented: false,
-              globalCompositeOperation: "multiply", // High-fidelity blend mode that multiplies highlights/shadows over color!
-            });
-            
-            canvas.setBackgroundImage(img, () => {
-              canvas.renderAll();
-              updateHiddenCanvas();
-              if (textureRef.current) {
-                textureRef.current.needsUpdate = true;
-              }
-            });
-          },
-          { crossOrigin: "anonymous" } // Prevent CORS taint on dynamic canvas textures
-        );
-      });
-    });
-
-    // B. Clear previous 3D model
-    if (modelRef.current) {
-      sceneRef.current.remove(modelRef.current);
-      modelRef.current.traverse((node) => {
-        if (node.isMesh) {
-          node.geometry.dispose();
-          if (Array.isArray(node.material)) {
-            node.material.forEach((mat) => mat.dispose());
-          } else {
-            node.material.dispose();
-          }
-        }
-      });
-      modelRef.current = null;
-    }
-
-    // C. Load new 3D model (.glb) from Cloud Storage
-    const loader = new GLTFLoader();
-    loader.load(
-      activeProduct.glb_file_url,
-      (gltf) => {
-        const model = gltf.scene;
-        modelRef.current = model;
-
-        // Apply Fabric canvas texture to model materials
-        model.traverse((node) => {
-          if (node.isMesh) {
-            node.castShadow = true;
-            node.receiveShadow = true;
-
-            // Map our dynamic canvas texture
-            node.material.map = textureRef.current;
-            // Keep material color tint white to allow exact Fabric canvas colors and graphics to render untinted
-            if (node.material.color) {
-              node.material.color.set("#ffffff");
-            }
-            
-            // Apply dynamic fabric material properties (cotton, polyester, fleece)
-            const props = fabricProperties[selectedFabric] || fabricProperties.cotton;
-            node.material.roughness = props.roughness;
-            node.material.metalness = props.metalness;
-            node.material.bumpMap = createProceduralFabricTexture(selectedFabric);
-            node.material.bumpScale = props.bumpScale || 0.03;
-            node.material.needsUpdate = true;
-          }
-        });
-
-        // Center model in scene
-        const box = new THREE.Box3().setFromObject(model);
-        const center = box.getCenter(new THREE.Vector3());
-        const size = box.getSize(new THREE.Vector3());
-
-        // Center position
-        model.position.x += (model.position.x - center.x);
-        model.position.y += (model.position.y - center.y);
-        model.position.z += (model.position.z - center.z);
-
-        // Adjust scale if necessary to fit nicely
-        const maxDim = Math.max(size.x, size.y, size.z);
-        if (maxDim > 0) {
-          const scale = 1.6 / maxDim;
-          model.scale.set(scale, scale, scale);
-        }
-
-        sceneRef.current.add(model);
-        setIsLoadingModel(false);
-      },
-      (xhr) => {
-        // progress
-      },
-      (err) => {
-        console.error("An error occurred loading GLB:", err);
-        setIsLoadingModel(false);
-      }
-    );
-
-  }, [activeProduct, checkingAuth, session, isThreeReady, isFabricReady]);
-
-
-
-  // 5. Canvas manipulation utilities
-  const addText = () => {
-    const canvas = fabricCanvasRef.current;
-    if (!canvas) return;
-
-    import("fabric").then((fabricModule) => {
-      const fabric = fabricModule.fabric;
-      const text = new fabric.IText("Double-click to edit", {
-        left: 150,
-        top: 200,
-        fontFamily: "Outfit, Inter, sans-serif",
-        fill: textColor,
-        fontSize: 28,
-        fontWeight: "bold",
-        cornerColor: "#4f46e5",
-        cornerSize: 8,
-        transparentCorners: false,
-      });
-      canvas.add(text);
-      canvas.setActiveObject(text);
-      canvas.renderAll();
-    });
-  };
-
-  const addShape = (type) => {
-    const canvas = fabricCanvasRef.current;
-    if (!canvas) return;
-
-    import("fabric").then((fabricModule) => {
-      const fabric = fabricModule.fabric;
-      let shape;
-
-      if (type === "square") {
-        shape = new fabric.Rect({
-          left: 200,
-          top: 200,
-          fill: fillColor,
-          width: 80,
-          height: 80,
-          cornerColor: "#4f46e5",
-          cornerSize: 8,
-          transparentCorners: false,
-        });
-      } else if (type === "circle") {
-        shape = new fabric.Circle({
-          left: 200,
-          top: 200,
-          fill: fillColor,
-          radius: 40,
-          cornerColor: "#4f46e5",
-          cornerSize: 8,
-          transparentCorners: false,
-        });
-      }
-
-      if (shape) {
-        canvas.add(shape);
-        canvas.setActiveObject(shape);
-        canvas.renderAll();
-      }
-    });
-  };
-
-  const toggleDrawingMode = () => {
-    const canvas = fabricCanvasRef.current;
-    if (!canvas) return;
-
-    canvas.isDrawingMode = !isDrawing;
-    canvas.freeDrawingBrush.color = fillColor;
-    canvas.freeDrawingBrush.width = 5;
-    setIsDrawing(!isDrawing);
-  };
-
-  const updateSelectedColor = (color) => {
-    const canvas = fabricCanvasRef.current;
-    if (!canvas) return;
-
-    const activeObj = canvas.getActiveObject();
-    if (activeObj) {
-      activeObj.set("fill", color);
-      canvas.renderAll();
-    }
-    
-    setFillColor(color);
-    if (canvas.isDrawingMode) {
-      canvas.freeDrawingBrush.color = color;
-    }
-  };
-
-  const handleGarmentColorChange = (color) => {
-    setGarmentColor(color);
-
-    // 1. Update Fabric Canvas Background Color and instantly refresh dynamic WebGL texture
-    const canvas = fabricCanvasRef.current;
-    if (canvas) {
-      canvas.setBackgroundColor(color, () => {
-        canvas.renderAll();
-        if (textureRef.current) {
-          textureRef.current.needsUpdate = true;
-        }
-      });
-    }
-
-    // 2. Keep Three.js material color white to render canvas background and graphics exactly as-is
-    if (modelRef.current) {
-      modelRef.current.traverse((node) => {
-        if (node.isMesh) {
-          if (node.material && node.material.color) {
-            node.material.color.set("#ffffff");
-            node.material.needsUpdate = true;
-          }
-        }
-      });
-    }
-  };
-
-  const handleScaleSelected = (factor) => {
-    const canvas = fabricCanvasRef.current;
-    if (!canvas) return;
-
-    const activeObj = canvas.getActiveObject();
-    if (activeObj && activeObj.type === "image") {
-      const currentScaleX = activeObj.scaleX || 1;
-      const currentScaleY = activeObj.scaleY || 1;
-      
-      const newScaleX = currentScaleX * factor;
-      const newScaleY = currentScaleY * factor;
-
-      // Impose boundaries for scaling safety
-      if (newScaleX >= 0.05 && newScaleX <= 3.0) {
-        activeObj.set({
-          scaleX: newScaleX,
-          scaleY: newScaleY
-        });
-        canvas.renderAll();
-        // Force 3D WebGL texture mapping update
-        if (textureRef.current) {
-          textureRef.current.needsUpdate = true;
-        }
-      }
-    }
-  };
-
-  const updateSelectedTextColor = (color) => {
-    const canvas = fabricCanvasRef.current;
-    if (!canvas) return;
-
-    const activeObj = canvas.getActiveObject();
-    if (activeObj && activeObj.type === "i-text") {
-      activeObj.set("fill", color);
-      canvas.renderAll();
-    }
-    setTextColor(color);
-  };
-
-  const deleteSelected = () => {
-    const canvas = fabricCanvasRef.current;
-    if (!canvas) return;
-
-    const activeObj = canvas.getActiveObject();
-    if (activeObj) {
-      canvas.remove(activeObj);
-      canvas.discardActiveObject();
-      canvas.renderAll();
-    }
-  };
-
-  const clearCanvas = () => {
-    const canvas = fabricCanvasRef.current;
-    if (!canvas) return;
-    if (!confirm("Are you sure you want to clear your custom design?")) return;
-
-    // Remove all shapes/text, but keep base background image
-    const objects = canvas.getObjects();
-    while (objects.length > 0) {
-      canvas.remove(objects[0]);
-    }
-    canvas.renderAll();
-  };
-
-  // 6. Undo/Redo logic
-  const handleUndo = () => {
-    const canvas = fabricCanvasRef.current;
-    if (!canvas || historyIndex <= 0) return;
-
-    const newIndex = historyIndex - 1;
-    setHistoryIndex(newIndex);
-    
-    canvas.loadFromJSON(canvasHistory[newIndex], () => {
-      canvas.renderAll();
-    });
-  };
-
-  const handleRedo = () => {
-    const canvas = fabricCanvasRef.current;
-    if (!canvas || historyIndex >= canvasHistory.length - 1) return;
-
-    const newIndex = historyIndex + 1;
-    setHistoryIndex(newIndex);
-
-    canvas.loadFromJSON(canvasHistory[newIndex], () => {
-      canvas.renderAll();
-    });
-  };
-
-  // 7. Image Sticker Upload
-  const handleStickerUpload = (e) => {
-    const canvas = fabricCanvasRef.current;
-    if (!canvas || !e.target.files?.[0]) return;
-
-    const file = e.target.files[0];
-    const reader = new FileReader();
-
-    reader.onload = (f) => {
-      const data = f.target.result;
-      import("fabric").then((fabricModule) => {
-        const fabric = fabricModule.fabric;
-        fabric.Image.fromURL(data, (img) => {
-          img.set({
-            left: 150,
-            top: 150,
-            scaleX: 0.25,
-            scaleY: 0.25,
-            cornerColor: "#4f46e5",
-            cornerSize: 8,
-            transparentCorners: false,
-            selectable: true,
-            evented: true,
-            padding: 12, // Expand click/drag selection hitbox size
-            hoverCursor: "grab", // Open hand cursor when hovering!
-            perPixelTargetFind: false, // Transparent pixel click-through disabled so entire box is clickable!
-            hasBorders: true,
-            hasControls: true,
-
-            // Lock all standard manual scaling controls as requested!
-            lockScalingX: true,
-            lockScalingY: true,
-            lockUniScaling: true,
-          });
-          
-          // Disable all standard scale corner handles, keeping only drag and rotate
-          img.setControlsVisibility({
-            mt: false, // middle top
-            mb: false, // middle bottom
-            ml: false, // middle left
-            mr: false, // middle right
-            bl: false, // bottom left
-            br: false, // bottom right
-            tl: false, // top left
-            tr: false, // top right
-            mtr: true, // keep rotation control (top middle)
-          });
-
-          canvas.add(img);
-          canvas.setActiveObject(img);
-          canvas.renderAll();
-        });
-      });
-    };
-    reader.readAsDataURL(file);
-  };
-
-  const handleAddToCart = async () => {
-    if (!activeProduct) {
-      alert("Please select a garment to customize first!");
-      return;
-    }
-
-    const canvas = fabricCanvasRef.current;
-    if (!canvas) return;
-
-    // Show a premium glassmorphic loader while packing 3D/2D files!
-    const loaderOverlay = document.createElement("div");
-    loaderOverlay.style.cssText = `
-      position: fixed;
-      inset: 0;
-      background: rgba(9, 9, 11, 0.85);
-      backdrop-filter: blur(8px);
-      z-index: 9999;
-      display: flex;
-      flex-direction: column;
-      align-items: center;
-      justify-content: center;
-      color: white;
-      font-family: sans-serif;
-    `;
-    loaderOverlay.innerHTML = `
-      <div style="width:50px; height:50px; border:4px solid #3f3f46; border-top-color:#6366f1; border-radius:50%; animation:spin 1s linear infinite; margin-bottom:20px;"></div>
-      <p style="font-weight:bold; font-size:14px; margin-top:16px;">Compiling 3D Model & 2D Decal maps...</p>
-      <p style="font-size:11px; color:#71717a; margin-top:6px;">Please wait while we construct your high-definition manufacturing files.</p>
-      <style>@keyframes spin { to { transform: rotate(360deg); } }</style>
-    `;
-    document.body.appendChild(loaderOverlay);
-
-    try {
-      // 1. Export Fabric 2D Canvas full composite texture map
-      const designDataUrl = canvas.toDataURL({
-        format: "png",
-        quality: 0.95
-      });
-
-      // 2. Export transparent Decal overlay map
-      const bgImg = canvas.backgroundImage;
-      const bgColor = canvas.backgroundColor;
-      
-      canvas.backgroundImage = null;
-      canvas.setBackgroundColor("transparent", canvas.renderAll.bind(canvas));
-      const transparentDecalUrl = canvas.toDataURL({
-        format: "png",
-        quality: 0.95
-      });
-      
-      // Restore canvas backgrounds
-      canvas.backgroundImage = bgImg;
-      canvas.setBackgroundColor(bgColor, canvas.renderAll.bind(canvas));
-      canvas.renderAll();
-
-      // 3. Export customized 3D GLB model using Three.js GLTFExporter
-      let customGlbBase64 = "";
-      if (modelRef.current) {
-        try {
-          const { GLTFExporter } = await import("three/examples/jsm/exporters/GLTFExporter.js");
-          const exporter = new GLTFExporter();
-          
-          const glbBuffer = await new Promise((resolve, reject) => {
-            exporter.parse(
-              modelRef.current,
-              (result) => resolve(result),
-              (err) => reject(err),
-              { binary: true, animations: [] }
-            );
-          });
-
-          // Convert ArrayBuffer to Base64
-          let binary = '';
-          const bytes = new Uint8Array(glbBuffer);
-          const len = bytes.byteLength;
-          for (let i = 0; i < len; i++) {
-            binary += String.fromCharCode(bytes[i]);
-          }
-          customGlbBase64 = window.btoa(binary);
-        } catch (exportErr) {
-          console.error("Three.js GLB export pipeline failed:", exportErr);
-        }
-      }
-
-      // Generate a lightweight low-res thumbnail image for rendering inside the cart drawer
-      const lowResThumbnail = canvas.toDataURL({
-        format: "png",
-        quality: 0.3,
-        multiplier: 0.15 // extremely lightweight (approx 10-15KB)
-      });
-
-      const itemId = `cart_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
-      const designCacheKey = `design_${itemId}`;
-
-      // 4. Save high-resolution binary, vector SVG, and image data securely in high-capacity IndexedDB cache
-      await saveDesignData(designCacheKey, {
-        customDesignUrl: designDataUrl,
-        customDecalUrl: transparentDecalUrl,
-        customGlbBase64: customGlbBase64,
-        customSvg: canvas.toSVG()
-      });
-
-      // Prepare custom cart item (strictly lightweight under 20KB!)
-      const fabricProps = fabricProperties[selectedFabric] || fabricProperties.cotton;
-      const upcharge = fabricProps.upcharge;
-
-      const cartItem = {
-        id: itemId,
-        productId: activeProduct.id,
-        name: `${activeProduct.name} (${fabricProps.label})`,
-        baseTexture: activeProduct.texture_url,
-        glbUrl: activeProduct.glb_file_url,
-        thumbnailUrl: lowResThumbnail, // Lightweight PNG thumbnail to render in cart drawer
-        designCacheKey: designCacheKey, // Key to retrieve full assets from IndexedDB on checkout
-        size: "M", // default size
-        quantity: 1,
-        addedAt: new Date().toISOString(),
-        price: (activeProduct.price || 3999) + upcharge,
-        fabric: selectedFabric
-      };
-
-      // 5. Sync to local storage immediately (Completely safe from QuotaExceededError!)
-      const localCart = JSON.parse(localStorage.getItem("apparel_cart") || "[]");
-      localCart.push(cartItem);
-      localStorage.setItem("apparel_cart", JSON.stringify(localCart));
-
-      // 6. Try to sync to Supabase database (thumbnail/lightweight URL only)
-      const { data: { session: currentSession } } = await supabase.auth.getSession();
-      if (currentSession) {
-        try {
-          await supabase.from("cart_items").insert([
-            {
-              user_id: currentSession.user.id,
-              product_id: activeProduct.id,
-              custom_design_url: lowResThumbnail, // database reference is also lightweight
-              size: "M",
-              quantity: 1
-            }
-          ]);
-        } catch (dbErr) {
-          console.warn("Database sync skipped:", dbErr.message);
-        }
-      }
-
-      if (document.body.contains(loaderOverlay)) {
-        document.body.removeChild(loaderOverlay);
-      }
-      alert(`🎉 Custom design saved successfully! Redirecting to studio dashboard...`);
-      router.push("/dashboard");
-    } catch (err) {
-      console.error("Cart save failed:", err);
-      if (document.body.contains(loaderOverlay)) {
-        document.body.removeChild(loaderOverlay);
-      }
-      alert("Could not add to cart. Please try again.");
-    }
-  };
-
-  const handleSignOut = async () => {
-    await supabase.auth.signOut();
-    router.push("/auth");
-  };
-
-  if (checkingAuth) {
-    return (
-      <div className="min-h-screen bg-zinc-950 flex flex-col items-center justify-center text-white">
-        <Loader2 className="w-8 h-8 animate-spin text-indigo-500 mb-4" />
-        <p className="text-sm text-zinc-400">Loading custom apparel studio...</p>
-      </div>
-    );
-  }
+  ];
 
   return (
-    <div className="h-screen w-screen flex flex-col bg-zinc-950 text-white overflow-hidden font-sans">
+    <div className="min-h-screen bg-zinc-950 text-white font-sans overflow-x-hidden">
       
-      {/* Studio Header */}
-      <header className="h-14 border-b border-zinc-900 bg-zinc-950 px-4 flex items-center justify-between shrink-0 z-30">
-        <Link href="/dashboard" className="flex items-center gap-3 hover:opacity-85 transition-opacity">
-          <div className="w-8 h-8 bg-gradient-to-tr from-indigo-500 to-purple-600 rounded-lg flex items-center justify-center shadow-md">
-            <Sparkles className="w-4 h-4 text-white" />
-          </div>
-          <span className="font-extrabold tracking-tight text-sm">
-            THREAD <span className="bg-gradient-to-r from-indigo-400 to-purple-500 bg-clip-text text-transparent">3D</span> STUDIO
-          </span>
-          <span className="text-[10px] bg-zinc-900 border border-zinc-800 text-zinc-400 px-2 py-0.5 rounded-full uppercase tracking-widest font-semibold ml-2">
-            V1.0 Beta
-          </span>
-        </Link>
+      {/* Background Neon Spotlights */}
+      <div className="absolute top-0 left-1/4 w-[600px] h-[600px] bg-indigo-600/10 rounded-full blur-[140px] pointer-events-none -z-10" />
+      <div className="absolute top-[30%] right-1/4 w-[700px] h-[700px] bg-purple-600/5 rounded-full blur-[160px] pointer-events-none -z-10" />
+      <div className="absolute bottom-[10%] left-1/3 w-[500px] h-[500px] bg-indigo-500/5 rounded-full blur-[130px] pointer-events-none -z-10" />
 
-        {/* Action Controls */}
-        <div className="flex items-center gap-3">
-          <Link
-            href="/dashboard"
-            className="text-xs font-semibold px-3 py-1.5 bg-zinc-900 hover:bg-zinc-800 border border-zinc-800 text-zinc-300 rounded-lg transition-colors cursor-pointer"
-          >
-            Explore Shop
-          </Link>
+      {/* Global Navbar */}
+      <Navbar />
 
-          <button
-            onClick={handleAddToCart}
-            className="text-xs font-semibold px-3 py-1.5 bg-gradient-to-r from-emerald-600 to-teal-600 hover:from-emerald-500 hover:to-teal-500 text-white rounded-lg flex items-center gap-1.5 transition-all shadow-md shadow-emerald-600/10 cursor-pointer"
-          >
-            <Sparkles className="w-3.5 h-3.5 animate-pulse" />
-            <span>Save Design</span>
-          </button>
-
-          {(!process.env.NEXT_PUBLIC_ADMIN_EMAIL || process.env.NEXT_PUBLIC_ADMIN_EMAIL.split(",").map(e => e.trim().toLowerCase()).includes(session?.user?.email?.toLowerCase())) && (
-            <Link
-              href="/admin"
-              className="text-xs font-semibold px-3 py-1.5 bg-gradient-to-r from-indigo-600 to-purple-600 hover:from-indigo-500 hover:to-purple-500 text-white rounded-lg flex items-center gap-1.5 transition-all shadow-md shadow-indigo-600/10 cursor-pointer"
-            >
-              <Plus className="w-3.5 h-3.5" />
-              <span>Admin Control</span>
-            </Link>
-          )}
+      {/* Hero Section */}
+      <section className="relative pt-20 pb-16 md:pt-28 md:pb-24">
+        <div className="mx-auto max-w-7xl px-4 sm:px-6 lg:px-8 text-center">
           
-          <button
-            onClick={handleSignOut}
-            className="p-1.5 hover:bg-zinc-900 border border-zinc-900 hover:border-zinc-800 rounded-lg text-zinc-400 hover:text-white transition-colors cursor-pointer"
-            title="Sign Out"
-          >
-            <LogOut className="w-4 h-4" />
-          </button>
+          {/* Badge indicator */}
+          <div className="inline-flex items-center gap-2 bg-indigo-500/10 border border-indigo-500/20 text-indigo-400 text-xs font-bold px-4 py-1.5 rounded-full uppercase tracking-wider mb-8 animate-pulse">
+            <Sparkles className="w-4 h-4" />
+            <span>Interactive 3D Apparel Configurator</span>
+          </div>
+
+          {/* Main Title */}
+          <h1 className="text-4xl sm:text-6xl md:text-7xl font-extrabold tracking-tight bg-gradient-to-r from-zinc-50 via-zinc-100 to-zinc-400 bg-clip-text text-transparent leading-none max-w-4xl mx-auto">
+            Design Your Own Custom Apparel in <span className="bg-gradient-to-r from-indigo-400 via-purple-500 to-pink-500 bg-clip-text text-transparent">Real-Time 3D</span>
+          </h1>
+
+          {/* Subtitle */}
+          <p className="text-sm sm:text-lg text-zinc-400 mt-6 leading-relaxed max-w-2xl mx-auto font-medium">
+            Relocate standard e-commerce limits. Experience a premium workspace featuring real-time Three.js model viewport loading, Fabric.js decals, studio lighting presets, and automated vector prepress packages.
+          </p>
+
+          {/* CTAs */}
+          <div className="flex flex-col sm:flex-row items-center justify-center gap-4 mt-10">
+            <Link
+              href="/studio"
+              className="w-full sm:w-auto px-8 py-3.5 bg-gradient-to-r from-indigo-500 to-purple-600 hover:from-indigo-600 hover:to-purple-700 text-white font-bold text-sm rounded-xl shadow-lg hover:shadow-indigo-500/25 active:scale-[0.98] transition-all flex items-center justify-center gap-2 cursor-pointer group"
+            >
+              <Sparkles className="w-4 h-4 animate-pulse" />
+              <span>Enter 3D Studio</span>
+              <ArrowRight className="w-4 h-4 group-hover:translate-x-1 transition-transform" />
+            </Link>
+
+            <Link
+              href="/dashboard"
+              className="w-full sm:w-auto px-8 py-3.5 bg-zinc-900 border border-zinc-800 hover:bg-zinc-800 hover:border-zinc-700 text-zinc-300 font-bold text-sm rounded-xl transition-all flex items-center justify-center gap-2 cursor-pointer"
+            >
+              <ShoppingBag className="w-4 h-4" />
+              <span>Browse Catalog</span>
+            </Link>
+          </div>
+
+          {/* Stats Bar */}
+          <div className="mt-12 flex flex-col sm:flex-row items-center justify-center gap-6 sm:gap-10">
+            {[
+              { value: "2,400+", label: "Designs Created" },
+              { value: "48h", label: "Avg. Delivery" },
+              { value: "100%", label: "Satisfaction" },
+              { value: "380 GSM", label: "Fabric Quality" },
+            ].map((stat, i) => (
+              <div key={i} className="text-center">
+                <div className="text-2xl font-black bg-gradient-to-r from-indigo-400 to-purple-400 bg-clip-text text-transparent">{stat.value}</div>
+                <div className="text-[10px] text-zinc-500 font-semibold uppercase tracking-wider mt-0.5">{stat.label}</div>
+              </div>
+            ))}
+          </div>
         </div>
-      </header>
+      </section>
 
-      {/* Main Studio Body */}
-      <div className="flex-1 flex overflow-hidden">
-        
-        {/* Left Sidebar (Preset Models) */}
-        <aside className="w-[280px] border-r border-zinc-900 bg-zinc-950/40 backdrop-blur-xl flex flex-col shrink-0">
-          <div className="p-4 border-b border-zinc-900">
-            <h3 className="text-xs font-bold text-zinc-400 uppercase tracking-widest flex items-center gap-2">
-              <Layers className="w-3.5 h-3.5 text-indigo-400" />
-              <span>Garment Library</span>
-            </h3>
-            <p className="text-[10px] text-zinc-600 mt-1">Select a base garment mesh below to begin customization.</p>
-          </div>
-
-          {/* Model Preset List */}
-          <div className="flex-1 overflow-y-auto p-3 space-y-2">
-            {loadingProducts ? (
-              <div className="py-12 flex flex-col items-center justify-center text-zinc-500">
-                <Loader2 className="w-5 h-5 animate-spin text-zinc-400 mb-2" />
-                <p className="text-[10px]">Syncing cloud library...</p>
-              </div>
-            ) : products.length === 0 ? (
-              <div className="py-10 text-center px-4">
-                <p className="text-xs text-zinc-500">No models in database.</p>
-                <Link href="/admin" className="text-[10px] text-indigo-400 hover:underline mt-2 block">
-                  Add custom .glb models →
-                </Link>
-              </div>
-            ) : (
-              products.map((product) => (
-                <button
-                  key={product.id}
-                  onClick={() => setActiveProduct(product)}
-                  className={`w-full text-left p-3 rounded-xl border transition-all flex items-center gap-3 group cursor-pointer ${
-                    activeProduct?.id === product.id
-                      ? "bg-indigo-500/10 border-indigo-500/30 shadow-inner"
-                      : "bg-zinc-900/20 border-zinc-900 hover:border-zinc-800 hover:bg-zinc-900/40"
-                  }`}
-                >
-                  <div className="w-12 h-12 bg-zinc-950 border border-zinc-800 rounded-lg overflow-hidden shrink-0 flex items-center justify-center group-hover:border-zinc-700 transition-colors">
-                    <img 
-                      src={product.texture_url} 
-                      alt={product.name} 
-                      className="w-full h-full object-cover opacity-60 group-hover:opacity-80 transition-opacity" 
-                    />
-                  </div>
-                  <div className="truncate flex-1">
-                    <h4 className="text-xs font-semibold text-zinc-200 group-hover:text-white transition-colors truncate">
-                      {product.name}
-                    </h4>
-                    <p className="text-[9px] text-zinc-500 mt-0.5 truncate">
-                      Deploy: {new Date(product.created_at).toLocaleDateString()}
-                    </p>
-                  </div>
-                  <ChevronRight className={`w-3.5 h-3.5 text-zinc-600 transition-transform ${
-                    activeProduct?.id === product.id ? "text-indigo-400 translate-x-0.5" : "group-hover:translate-x-0.5"
-                  }`} />
-                </button>
-              ))
-            )}
-          </div>
-          {/* Premium Material Selector inside Left Sidebar! */}
-          <div className="p-4 border-t border-zinc-900 bg-zinc-950/60 mt-auto shrink-0 select-none">
-            <h3 className="text-xs font-bold text-zinc-400 uppercase tracking-widest flex items-center gap-2 mb-2">
-              <Sparkles className="w-3.5 h-3.5 text-indigo-400 animate-pulse" />
-              <span>Premium Fabrics</span>
-            </h3>
-            <p className="text-[9px] text-zinc-500 mb-3.5 leading-relaxed">
-              Tailor physical surface reflections. Premium selections add a custom upcharge.
-            </p>
+      {/* Main Feature Showcase Container */}
+      <section className="py-12 max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
+        <div className="bg-zinc-900/30 border border-zinc-900 rounded-3xl p-6 sm:p-10 backdrop-blur-xl relative overflow-hidden">
+          
+          <div className="grid grid-cols-1 lg:grid-cols-2 gap-12 items-center">
             
-            <div className="space-y-2">
-              {Object.entries(fabricProperties).map(([key, value]) => (
-                <button
-                  key={key}
-                  onClick={() => setSelectedFabric(key)}
-                  className={`w-full text-left p-2.5 rounded-xl border transition-all flex flex-col gap-1 group cursor-pointer ${
-                    selectedFabric === key
-                      ? "bg-indigo-500/10 border-indigo-500/30 shadow-inner"
-                      : "bg-zinc-900/20 border-zinc-900 hover:border-zinc-800 hover:bg-zinc-900/40"
-                  }`}
-                >
-                  <div className="flex items-center justify-between w-full">
-                    <span className={`text-[11px] font-bold ${selectedFabric === key ? "text-indigo-400" : "text-zinc-300 group-hover:text-white"}`}>
-                      {key === "cotton" ? "Matte Organic Cotton" : key === "polyester" ? "Shiny Athletic Polyester" : "Heavy Luxury Fleece"}
-                    </span>
-                    {value.upcharge > 0 ? (
-                      <span className="text-[8px] font-extrabold px-1.5 py-0.5 bg-emerald-500/10 text-emerald-400 border border-emerald-500/20 rounded-md">
-                        +₹{value.upcharge.toLocaleString('en-IN')}
-                      </span>
-                    ) : (
-                      <span className="text-[8px] font-extrabold px-1.5 py-0.5 bg-zinc-850 text-zinc-400 border border-zinc-800 rounded-md">
-                        FREE
-                      </span>
-                    )}
+            {/* Left Content Column */}
+            <div className="space-y-6">
+              <div className="flex items-center gap-2">
+                <Cpu className="w-5 h-5 text-indigo-400" />
+                <span className="text-xs font-bold text-indigo-400 uppercase tracking-widest">Technological Core</span>
+              </div>
+              
+              <h2 className="text-2xl sm:text-4xl font-extrabold tracking-tight text-white leading-tight">
+                Cinematic Lighting and Double-Flipped Projection mapping
+              </h2>
+              
+              <p className="text-sm text-zinc-400 leading-relaxed font-medium">
+                Our custom configurator maps your interactive canvas onto a 3D model mesh dynamically. The texture maps are split into double-flipped UV coordinates, ensuring both front and back prints line up with extreme accuracy.
+              </p>
+
+              <div className="grid grid-cols-2 gap-4 pt-4">
+                <div className="border border-zinc-900/60 bg-zinc-950/40 p-4 rounded-2xl">
+                  <h4 className="text-indigo-400 font-extrabold text-sm">3D Renderer</h4>
+                  <p className="text-[11px] text-zinc-500 mt-1 font-medium">Three.js WebGL rendering with custom orbital damping controls.</p>
+                </div>
+                <div className="border border-zinc-900/60 bg-zinc-950/40 p-4 rounded-2xl">
+                  <h4 className="text-purple-400 font-extrabold text-sm">Decal Composer</h4>
+                  <p className="text-[11px] text-zinc-500 mt-1 font-medium">Fabric.js drawing context overlay with multi-object scaling safety limits.</p>
+                </div>
+              </div>
+            </div>
+
+            {/* Right Graphic Column: Configurator mockup */}
+            <div className="relative border border-zinc-900 bg-zinc-950/80 rounded-2xl overflow-hidden p-6 aspect-video flex flex-col justify-between shadow-2xl">
+              <div className="absolute inset-0 bg-gradient-to-tr from-indigo-500/10 to-purple-600/10 pointer-events-none" />
+              
+              {/* Fake UI Header */}
+              <div className="flex items-center justify-between border-b border-zinc-900 pb-3 z-10">
+                <div className="flex items-center gap-2">
+                  <div className="w-2.5 h-2.5 rounded-full bg-red-500" />
+                  <div className="w-2.5 h-2.5 rounded-full bg-yellow-500" />
+                  <div className="w-2.5 h-2.5 rounded-full bg-green-500" />
+                </div>
+                <span className="text-[10px] font-mono text-zinc-500">studio_viewport_active.glb</span>
+                <span className="text-[9px] bg-emerald-500/15 text-emerald-400 font-semibold px-2 py-0.5 rounded-full">WebGL Live</span>
+              </div>
+
+              {/* Fake UI Body (Visual 3D model placeholder) */}
+              <div className="flex-1 flex items-center justify-center relative py-6">
+                
+                {/* Visual model representation */}
+                <div className="w-28 h-28 bg-gradient-to-tr from-zinc-800 to-zinc-900 border border-zinc-700 rounded-2xl flex flex-col items-center justify-center shadow-lg relative animate-bounce duration-3000">
+                  <div className="absolute top-2 left-2 flex items-center gap-1">
+                    <Sparkles className="w-3 h-3 text-indigo-400" />
                   </div>
-                  <span className="text-[9px] text-zinc-500 leading-snug">
-                    {key === "cotton" ? "Flat, organic 100% cotton threads" : key === "polyester" ? "Reflective, sleek high-performance finish" : "Extra thick, warm luxury heavy fleece feel"}
-                  </span>
-                </button>
+                  <span className="text-2xl font-black text-white/25">3D</span>
+                  <span className="text-[8px] text-indigo-400/60 font-mono mt-1">MESH DETECTED</span>
+                </div>
+
+                {/* Flying decals */}
+                <div className="absolute top-10 right-10 bg-indigo-500/10 border border-indigo-500/30 text-indigo-400 font-mono text-[9px] px-2 py-1 rounded-lg backdrop-blur-md animate-pulse">
+                  Decal: scale: 1.25
+                </div>
+                <div className="absolute bottom-10 left-10 bg-purple-500/10 border border-purple-500/30 text-purple-400 font-mono text-[9px] px-2 py-1 rounded-lg backdrop-blur-md animate-pulse">
+                  Lighting: sunset
+                </div>
+              </div>
+
+              {/* Fake UI Footer */}
+              <div className="flex items-center justify-between border-t border-zinc-900 pt-3 text-zinc-600 text-[9px] font-mono z-10">
+                <span>Verts: 24,192</span>
+                <span>OrbitControls Damping: 0.05</span>
+                <span>BumpScale: 0.04</span>
+              </div>
+
+            </div>
+
+          </div>
+        </div>
+      </section>
+
+      {/* Interactive Fabric Showcase */}
+      <section className="py-20 max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
+        <div className="text-center mb-12">
+          <h2 className="text-3xl font-extrabold tracking-tight">Premium Real-Time Fabric Simulation</h2>
+          <p className="text-xs text-zinc-400 mt-2">Relocate fabrics to see how texture roughness and reflection changes standard pricing.</p>
+        </div>
+
+        <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
+          {Object.entries(fabrics).map(([key, data]) => {
+            const isActive = selectedFabric === key;
+            return (
+              <button
+                key={key}
+                onClick={() => setSelectedFabric(key)}
+                className={`p-6 rounded-2xl border text-left transition-all relative overflow-hidden group cursor-pointer ${
+                  isActive 
+                    ? "bg-indigo-500/10 border-indigo-500/30 shadow-lg shadow-indigo-500/5" 
+                    : "bg-zinc-900/30 border-zinc-900 hover:border-zinc-800 hover:bg-zinc-900/50"
+                }`}
+              >
+                {isActive && (
+                  <div className="absolute top-4 right-4 text-indigo-400">
+                    <CheckCircle className="w-5 h-5" />
+                  </div>
+                )}
+                <span className={`text-[10px] font-extrabold uppercase tracking-widest ${isActive ? "text-indigo-400" : "text-zinc-500"}`}>
+                  Material Option
+                </span>
+                <h3 className="text-lg font-bold text-white mt-2">{data.name}</h3>
+                
+                <p className="text-xs text-zinc-400 mt-3 leading-relaxed">
+                  {data.description}
+                </p>
+
+                <div className="mt-6 pt-4 border-t border-zinc-900/60 space-y-1.5 text-[11px] font-mono text-zinc-500">
+                  <div className="flex justify-between">
+                    <span>Roughness Index:</span>
+                    <span className="text-zinc-300 font-semibold">{data.roughness}</span>
+                  </div>
+                  <div className="flex justify-between">
+                    <span>Metalness Index:</span>
+                    <span className="text-zinc-300 font-semibold">{data.metalness}</span>
+                  </div>
+                  <div className="flex justify-between">
+                    <span>Price Upcharge:</span>
+                    <span className="text-indigo-400 font-bold">{data.upcharge}</span>
+                  </div>
+                </div>
+              </button>
+            );
+          })}
+        </div>
+      </section>
+
+      {/* ====== FEATURED CATALOG PRODUCTS ====== */}
+      {(loadingFeatured || featuredProducts.length > 0) && (
+        <section className="py-20 max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
+          <div className="flex justify-between items-end mb-10">
+            <div>
+              <div className="text-[10px] font-bold text-indigo-400 uppercase tracking-widest mb-2">New Arrivals</div>
+              <h2 className="text-3xl font-extrabold tracking-tight text-white">Shop Ready-to-Wear</h2>
+              <p className="text-xs text-zinc-400 mt-1.5">Pre-designed by our studio team. Ship in 48h.</p>
+            </div>
+            <Link href="/dashboard" className="text-xs text-indigo-400 hover:text-indigo-300 font-bold uppercase tracking-wider flex items-center gap-1 group">
+              View All
+              <ArrowRight className="w-3.5 h-3.5 group-hover:translate-x-0.5 transition-transform" />
+            </Link>
+          </div>
+
+          {loadingFeatured ? (
+            <div className="grid grid-cols-2 sm:grid-cols-2 lg:grid-cols-4 gap-5">
+              {[1,2,3,4].map(i => (
+                <div key={i} className="bg-zinc-900/30 border border-zinc-900 rounded-2xl overflow-hidden animate-pulse">
+                  <div className="aspect-[3/4] bg-zinc-900" />
+                  <div className="p-3 space-y-2">
+                    <div className="h-3 bg-zinc-800 rounded w-3/4" />
+                    <div className="h-3 bg-zinc-800 rounded w-1/2" />
+                  </div>
+                </div>
               ))}
             </div>
-          </div>
-        </aside>
-
-        {/* Center Canvas Area (2D Designer) */}
-        <section className="flex-1 bg-zinc-950 flex flex-col items-center justify-center py-3 px-6 relative overflow-hidden">
-          
-          {/* Custom dotted grid background for blueprint feel */}
-          <div className="absolute inset-0 bg-[radial-gradient(#27272a_1px,transparent_1px)] [background-size:20px_20px] opacity-60" />
-
-          {/* Dotted grid workspace container */}
-          <div className="relative z-10 flex flex-col items-center">
-            
-            {/* Top Toolbar (Fabric tools & Undo/Redo) */}
-            <div className="mb-2 bg-zinc-900/70 border border-zinc-800 backdrop-blur-xl px-4 py-2 rounded-2xl flex items-center justify-between gap-6 shadow-xl max-w-lg w-full">
-              
-              {/* History Controls */}
-              <div className="flex items-center gap-1.5 border-r border-zinc-800/80 pr-4">
-                <button
-                  onClick={handleUndo}
-                  disabled={historyIndex <= 0}
-                  className="p-1.5 hover:bg-zinc-800 rounded-lg text-zinc-400 hover:text-white disabled:opacity-30 disabled:hover:bg-transparent transition-colors cursor-pointer"
-                  title="Undo"
+          ) : (
+            <div className="grid grid-cols-2 sm:grid-cols-2 lg:grid-cols-4 gap-5">
+              {featuredProducts.map(product => (
+                <Link key={product.id} href={`/product/${product.id}`}
+                  className="bg-zinc-900/25 border border-zinc-900 hover:border-zinc-700 rounded-2xl overflow-hidden group transition-all hover:shadow-xl hover:shadow-zinc-950/50 cursor-pointer block"
                 >
-                  <Undo2 className="w-4 h-4" />
-                </button>
-                <button
-                  onClick={handleRedo}
-                  disabled={historyIndex >= canvasHistory.length - 1}
-                  className="p-1.5 hover:bg-zinc-800 rounded-lg text-zinc-400 hover:text-white disabled:opacity-30 disabled:hover:bg-transparent transition-colors cursor-pointer"
-                  title="Redo"
-                >
-                  <Redo2 className="w-4 h-4" />
-                </button>
-              </div>
-
-              {/* Action Tabs selector */}
-              <div className="flex items-center gap-1">
-                {[
-                  { id: "presets", label: "Branding", icon: Sliders },
-                  { id: "text", label: "Typography", icon: Type },
-                  { id: "graphics", label: "Graphics", icon: Square },
-                ].map((tab) => {
-                  const Icon = tab.icon;
-                  return (
-                    <button
-                      key={tab.id}
-                      onClick={() => {
-                        setActiveTab(tab.id);
-                      }}
-                      className={`text-xs font-semibold px-2.5 py-1.5 rounded-lg flex items-center gap-1.5 transition-colors cursor-pointer ${
-                        activeTab === tab.id
-                          ? "bg-indigo-500/10 text-indigo-400"
-                          : "text-zinc-400 hover:text-white hover:bg-zinc-800"
-                      }`}
-                    >
-                      <Icon className="w-3.5 h-3.5" />
-                      <span className="hidden sm:inline">{tab.label}</span>
-                    </button>
-                  );
-                })}
-              </div>
-
-              {/* Utility Tools */}
-              <div className="flex items-center gap-1.5 border-l border-zinc-800/80 pl-4">
-                <button
-                  onClick={deleteSelected}
-                  className="p-1.5 hover:bg-red-500/10 hover:text-red-400 border border-transparent hover:border-red-500/20 rounded-lg text-zinc-400 transition-all cursor-pointer"
-                  title="Delete Selected object"
-                >
-                  <Trash2 className="w-4 h-4" />
-                </button>
-                <button
-                  onClick={clearCanvas}
-                  className="p-1.5 hover:bg-zinc-800 rounded-lg text-zinc-400 hover:text-white transition-colors cursor-pointer"
-                  title="Clear canvas"
-                >
-                  <RefreshCw className="w-4 h-4" />
-                </button>
-              </div>
-
-            </div>
-
-            {/* Fabric Canvas Frame */}
-            <div className="bg-zinc-900 border border-zinc-800 rounded-2xl p-2.5 shadow-2xl relative overflow-hidden">
-              {/* Inner wrapper */}
-              <div className="border border-zinc-800/80 rounded-lg overflow-hidden bg-white shadow-inner">
-                <canvas id="fabric-canvas" />
-              </div>
-            </div>
-
-            {/* Bottom context configuration bar */}
-            <div className="mt-2.5 bg-zinc-900/60 border border-zinc-800/80 backdrop-blur-xl px-4 py-2.5 rounded-2xl shadow-lg w-full max-w-lg">
-              {activeTab === "presets" && (
-                <div className="space-y-3">
-                  <div className="flex items-center justify-between text-xs gap-4 w-full">
-                    <div className="flex flex-col">
-                      <span className="font-semibold text-zinc-300">Base Garment Specs</span>
-                      <span className="text-[10px] text-zinc-500 mt-0.5 truncate max-w-[100px]">
-                        {activeProduct ? activeProduct.name : "None Loaded"}
-                      </span>
-                    </div>
-
-                    {/* Garment Base Color Picker */}
-                    <div className="flex items-center gap-2 border-l border-zinc-800/80 px-4">
-                      <span className="text-[10px] text-zinc-500 font-semibold uppercase">Fabric Color:</span>
-                      <input
-                        type="color"
-                        value={garmentColor}
-                        onChange={(e) => handleGarmentColorChange(e.target.value)}
-                        className="w-7 h-7 rounded border border-zinc-700 bg-transparent cursor-pointer"
-                        title="Change Garment Base Color"
-                      />
-                    </div>
-
-                    {/* Decal Scale Controls (Only visible if an image is selected) */}
-                    {selectedObjectType === "image" && (
-                      <div className="flex items-center gap-2 border-l border-zinc-800/80 px-4 animate-fade-in">
-                        <span className="text-[10px] text-zinc-500 font-semibold uppercase">Decal Size:</span>
-                        <div className="flex items-center gap-1 bg-zinc-950 border border-zinc-850 rounded-lg p-0.5">
-                          <button
-                            onClick={() => handleScaleSelected(0.9)}
-                            className="w-6 h-6 hover:bg-zinc-900 rounded font-bold text-zinc-400 hover:text-white flex items-center justify-center cursor-pointer text-sm"
-                            title="Shrink Decal (-)"
-                          >
-                            -
-                          </button>
-                          <span className="text-[9px] text-zinc-600 font-mono px-1 select-none">SCALE</span>
-                          <button
-                            onClick={() => handleScaleSelected(1.1)}
-                            className="w-6 h-6 hover:bg-zinc-900 rounded font-bold text-zinc-400 hover:text-white flex items-center justify-center cursor-pointer text-sm"
-                            title="Enlarge Decal (+)"
-                          >
-                            +
-                          </button>
-                        </div>
+                  <div className="relative bg-zinc-950 overflow-hidden" style={{ aspectRatio: '3/4' }}>
+                    <img src={product.texture_url} alt={product.name}
+                      className="absolute inset-0 w-full h-full object-cover opacity-90 group-hover:opacity-100 group-hover:scale-105 transition-all duration-500"
+                      onError={(e) => { e.target.style.display = 'none'; }}
+                    />
+                    {product.category && (
+                      <div className="absolute top-2 left-2 bg-zinc-950/80 border border-zinc-800 text-[9px] text-zinc-400 font-bold px-2 py-0.5 rounded-full uppercase tracking-wider backdrop-blur-sm">
+                        {product.category}
                       </div>
                     )}
-                    
-                    {/* Sticker Upload */}
-                    <label className="bg-zinc-800 hover:bg-zinc-700 border border-zinc-700 text-zinc-200 px-3 py-1.5 rounded-lg text-xs font-semibold flex items-center gap-1.5 cursor-pointer transition-colors shrink-0">
-                      <ImageIcon className="w-3.5 h-3.5" />
-                      <span>Apply Decal</span>
-                      <input
-                        type="file"
-                        accept="image/*"
-                        onChange={handleStickerUpload}
-                        className="hidden"
-                      />
-                    </label>
                   </div>
-                </div>
-              )}
-
-              {activeTab === "text" && (
-                <div className="flex items-center justify-between gap-4">
-                  <button
-                    onClick={addText}
-                    className="bg-indigo-600 hover:bg-indigo-500 text-white px-3 py-1.5 rounded-lg text-xs font-semibold flex items-center gap-1.5 cursor-pointer transition-colors shadow-md"
-                  >
-                    <Plus className="w-3.5 h-3.5" />
-                    <span>Insert Text</span>
-                  </button>
-
-                  <div className="flex items-center gap-2">
-                    <span className="text-[10px] text-zinc-500 font-semibold uppercase">Color:</span>
-                    <input
-                      type="color"
-                      value={textColor}
-                      onChange={(e) => updateSelectedTextColor(e.target.value)}
-                      className="w-7 h-7 rounded border border-zinc-700 bg-transparent cursor-pointer"
-                    />
+                  <div className="p-3">
+                    <h3 className="font-bold text-xs text-zinc-200 group-hover:text-white line-clamp-1 transition-colors">{product.name}</h3>
+                    <div className="flex items-center justify-between mt-2">
+                      <span className="text-sm font-black text-indigo-400">₹{(product.price || 3999).toLocaleString('en-IN')}</span>
+                      <span className="text-[9px] font-bold text-zinc-500 group-hover:text-indigo-400 transition-colors">View →</span>
+                    </div>
                   </div>
-                </div>
-              )}
-
-              {activeTab === "graphics" && (
-                <div className="flex items-center justify-between gap-4">
-                  <div className="flex items-center gap-2">
-                    <button
-                      onClick={() => addShape("square")}
-                      className="bg-zinc-800 hover:bg-zinc-700 border border-zinc-700 text-zinc-200 px-3 py-1.5 rounded-lg text-xs font-semibold flex items-center gap-1.5 cursor-pointer transition-colors"
-                    >
-                      <Square className="w-3.5 h-3.5" />
-                      <span>Add Box</span>
-                    </button>
-                    <button
-                      onClick={() => addShape("circle")}
-                      className="bg-zinc-800 hover:bg-zinc-700 border border-zinc-700 text-zinc-200 px-3 py-1.5 rounded-lg text-xs font-semibold flex items-center gap-1.5 cursor-pointer transition-colors"
-                    >
-                      <Circle className="w-3.5 h-3.5" />
-                      <span>Add Round</span>
-                    </button>
-                  </div>
-
-                  <div className="flex items-center gap-2">
-                    <span className="text-[10px] text-zinc-500 font-semibold uppercase">Fill:</span>
-                    <input
-                      type="color"
-                      value={fillColor}
-                      onChange={(e) => updateSelectedColor(e.target.value)}
-                      className="w-7 h-7 rounded border border-zinc-700 bg-transparent cursor-pointer"
-                    />
-                  </div>
-                </div>
-              )}
-
+                </Link>
+              ))}
             </div>
-
-          </div>
-
-          {/* Floating 3D Preview Window */}
-          <div className="absolute bottom-6 right-6 w-[320px] h-[340px] bg-zinc-900/90 border border-zinc-800 rounded-2xl shadow-2xl backdrop-blur-md overflow-hidden flex flex-col z-20 group">
-            
-            {/* Header of 3D frame */}
-            <div className="px-4 py-2.5 border-b border-zinc-800 bg-zinc-950/40 flex items-center justify-between text-xs select-none">
-              <span className="font-semibold tracking-wider text-zinc-400 uppercase">3D Real-time Render</span>
-              <div className="flex items-center gap-1.5">
-                {isLoadingModel ? (
-                  <Loader2 className="w-3.5 h-3.5 animate-spin text-indigo-400" />
-                ) : (
-                  <span className="w-2 h-2 bg-emerald-500 rounded-full shadow-lg shadow-emerald-500/20" />
-                )}
-                <span className="text-[9px] text-zinc-500 font-semibold">WEBGL ENGINE</span>
-              </div>
-            </div>
-
-            {/* Three.js Canvas Container */}
-            <div 
-              ref={threeContainerRef} 
-              className="flex-1 w-full h-full relative bg-radial from-zinc-900 to-zinc-950/80 cursor-grab active:cursor-grabbing"
-            >
-              {isLoadingModel && (
-                <div className="absolute inset-0 flex flex-col items-center justify-center text-zinc-400 bg-zinc-950/60 backdrop-blur-sm z-10">
-                  <Loader2 className="w-6 h-6 animate-spin text-indigo-500 mb-2" />
-                  <span className="text-[10px] font-semibold tracking-widest uppercase">Fetching 3D mesh...</span>
-                </div>
-              )}
-            </div>
-
-            {/* Showroom Lighting Presets Selector */}
-            <div className="px-4 py-2 border-t border-zinc-850 bg-zinc-950/40 flex items-center justify-between gap-2 select-none">
-              <span className="text-[9px] text-zinc-500 font-semibold uppercase tracking-wider">Lighting:</span>
-              <div className="flex items-center gap-1">
-                {[
-                  { id: "studio", label: "Studio" },
-                  { id: "showroom", label: "Showroom" },
-                  { id: "sunset", label: "Sunset" }
-                ].map((preset) => (
-                  <button
-                    key={preset.id}
-                    onClick={() => setLightingPreset(preset.id)}
-                    className={`px-2 py-0.5 rounded text-[8px] font-bold uppercase transition-all cursor-pointer border ${
-                      lightingPreset === preset.id
-                        ? "bg-indigo-600/10 border-indigo-500 text-indigo-400 font-extrabold"
-                        : "bg-zinc-900/50 border-zinc-850 text-zinc-400 hover:text-zinc-300 hover:border-zinc-800"
-                    }`}
-                  >
-                    {preset.label}
-                  </button>
-                ))}
-              </div>
-            </div>
-
-            {/* Base Colors Selector */}
-            <div className="px-4 py-2 border-t border-zinc-850 bg-zinc-950/20 flex items-center justify-between gap-2">
-              <span className="text-[9px] text-zinc-500 font-semibold uppercase tracking-wider">Base Color:</span>
-              <div className="flex items-center gap-1.5">
-                {[
-                  { name: "White", value: "#ffffff" },
-                  { name: "Charcoal", value: "#18181b" },
-                  { name: "Heather Gray", value: "#71717a" },
-                  { name: "Crimson", value: "#dc2626" },
-                  { name: "Royal Blue", value: "#2563eb" },
-                  { name: "Forest", value: "#16a34a" },
-                  { name: "Sand", value: "#d97706" },
-                ].map((preset) => (
-                  <button
-                    key={preset.value}
-                    onClick={() => handleGarmentColorChange(preset.value)}
-                    className={`w-3.5 h-3.5 rounded-full border transition-all cursor-pointer hover:scale-110 ${
-                      garmentColor.toLowerCase() === preset.value.toLowerCase()
-                        ? "border-indigo-500 scale-105 shadow-md ring-1 ring-indigo-500/50"
-                        : "border-zinc-700 hover:border-zinc-500"
-                    }`}
-                    style={{ backgroundColor: preset.value }}
-                    title={preset.name}
-                  />
-                ))}
-              </div>
-            </div>
-
-            {/* Instruction tooltip in 3D frame */}
-            <div className="px-4 py-2 border-t border-zinc-850/60 bg-zinc-950/60 text-[9px] text-zinc-500 text-center select-none">
-              Left Click + Drag to rotate 3D model. Scroll to zoom.
-            </div>
-
-          </div>
-
+          )}
         </section>
+      )}
 
-      </div>
+      {/* ====== TRUST BADGES ====== */}
+      <section className="py-16 border-t border-b border-zinc-900/60 bg-zinc-950/50">
+        <div className="max-w-5xl mx-auto px-4 sm:px-6 lg:px-8">
+          <div className="grid grid-cols-2 sm:grid-cols-4 gap-6 text-center">
+            {[
+              { emoji: "🚀", title: "Free Express Shipping", sub: "On all orders over ₹1,999" },
+              { emoji: "🔒", title: "Secure Payments", sub: "UPI, Stripe, Net Banking" },
+              { emoji: "↩️", title: "Easy 7-Day Returns", sub: "No questions asked" },
+              { emoji: "🏆", title: "Premium Quality", sub: "380 GSM certified fabrics" },
+            ].map((badge, i) => (
+              <div key={i} className="flex flex-col items-center gap-2.5 group">
+                <div className="text-3xl mb-1 group-hover:scale-110 transition-transform">{badge.emoji}</div>
+                <h4 className="text-xs font-extrabold text-zinc-200">{badge.title}</h4>
+                <p className="text-[10px] text-zinc-500 font-medium leading-snug">{badge.sub}</p>
+              </div>
+            ))}
+          </div>
+        </div>
+      </section>
+
+      {/* Steps Section */}
+      <section className="py-20 bg-zinc-950">
+        <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
+          <div className="text-center mb-16">
+            <h2 className="text-3xl font-extrabold tracking-tight text-white">How Thread3D Works</h2>
+            <p className="text-xs text-zinc-400 mt-2">A fully integrated, cloud-powered digital design system.</p>
+          </div>
+
+          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-8">
+            {steps.map((step, idx) => (
+              <div key={idx} className="bg-zinc-900/20 border border-zinc-900/60 p-6 rounded-2xl relative overflow-hidden group hover:border-zinc-800 transition-all">
+                <div className="w-10 h-10 bg-zinc-900 border border-zinc-800 rounded-xl flex items-center justify-center mb-4 group-hover:border-zinc-700 transition-colors">
+                  {step.icon}
+                </div>
+                <h3 className="text-sm font-extrabold text-white">{step.title}</h3>
+                <p className="text-[11px] text-zinc-400 mt-2 leading-relaxed">
+                  {step.desc}
+                </p>
+              </div>
+            ))}
+          </div>
+        </div>
+      </section>
+
+      {/* CTA Banner */}
+      <section className="py-20 max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
+        <div className="bg-gradient-to-tr from-indigo-950/60 via-purple-950/40 to-zinc-950 border-2 border-indigo-500/10 rounded-3xl p-8 sm:p-16 text-center relative overflow-hidden">
+          <div className="absolute inset-0 bg-grid-white/[0.02] pointer-events-none" />
+          <div className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-80 h-80 bg-indigo-500/10 rounded-full blur-[90px] pointer-events-none" />
+
+          <h2 className="text-3xl sm:text-5xl font-black tracking-tight text-white max-w-2xl mx-auto">
+            Ready to Forge Your Signature Custom Blend?
+          </h2>
+          <p className="text-xs sm:text-sm text-zinc-400 mt-4 leading-relaxed max-w-lg mx-auto font-medium">
+            Jump in and configure decals, modify base-mesh properties, and simulate details under dramatic sunsets. We package your vectors instantly.
+          </p>
+
+          <div className="mt-8 flex justify-center">
+            <Link
+              href="/studio"
+              className="px-8 py-3 bg-gradient-to-r from-indigo-500 to-purple-600 hover:from-indigo-600 hover:to-purple-700 text-white font-bold text-sm rounded-xl shadow-lg hover:shadow-indigo-500/20 active:scale-[0.98] transition-all flex items-center gap-2 cursor-pointer"
+            >
+              <span>Design Now</span>
+              <ArrowRight className="w-4 h-4" />
+            </Link>
+          </div>
+        </div>
+      </section>
+
+      {/* Footer */}
+      <footer className="border-t border-zinc-900 bg-zinc-950 py-16">
+        <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
+          <div className="grid grid-cols-1 sm:grid-cols-3 gap-10 mb-12">
+            <div>
+              <div className="text-lg font-extrabold text-white mb-2">Thread<span className="text-indigo-400">3D</span></div>
+              <p className="text-[11px] text-zinc-500 leading-relaxed">Luxury custom streetwear, designed in 3D and built by automated fabrication technology. Your design, in fabric, in 48 hours.</p>
+            </div>
+            <div>
+              <h4 className="text-[10px] font-bold text-zinc-400 uppercase tracking-widest mb-4">Quick Links</h4>
+              <div className="space-y-2">
+                {[
+                  { label: "Shop Catalog", href: "/dashboard" },
+                  { label: "3D Design Studio", href: "/studio" },
+                  { label: "Track Orders", href: "/dashboard" },
+                  { label: "Admin Panel", href: "/admin" },
+                ].map(link => (
+                  <Link key={link.href} href={link.href} className="block text-xs text-zinc-500 hover:text-indigo-400 font-medium transition-colors">{link.label}</Link>
+                ))}
+              </div>
+            </div>
+            <div>
+              <h4 className="text-[10px] font-bold text-zinc-400 uppercase tracking-widest mb-4">Support</h4>
+              <div className="space-y-2">
+                {[
+                  "help@thread3d.com",
+                  "Shipping Policy",
+                  "Returns & Refunds",
+                  "Privacy Policy"
+                ].map((item, i) => (
+                  <div key={i} className="text-xs text-zinc-500 font-medium">{item}</div>
+                ))}
+              </div>
+            </div>
+          </div>
+          <div className="border-t border-zinc-900 pt-6 flex flex-col sm:flex-row items-center justify-between gap-3 text-[10px] text-zinc-600">
+            <p>© 2026 Thread3D Studio LLC. All rights reserved.</p>
+            <p>Built with Next.js · Three.js · Fabric.js · Supabase</p>
+          </div>
+        </div>
+      </footer>
+
     </div>
   );
 }

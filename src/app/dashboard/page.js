@@ -24,6 +24,7 @@ import {
   ShieldCheck
 } from "lucide-react";
 import Link from "next/link";
+import Navbar from "@/components/Navbar";
 
 const getSlug = (name) => {
   return (name || "")
@@ -42,6 +43,10 @@ export default function DashboardPage() {
   const [products, setProducts] = useState([]);
   const [loadingProducts, setLoadingProducts] = useState(true);
   const [activeCategory, setActiveCategory] = useState("all");
+  const [preloadedDecalDataUrl, setPreloadedDecalDataUrl] = useState(null);
+  const [searchQuery, setSearchQuery] = useState("");
+  const [sortOrder, setSortOrder] = useState("newest"); // newest, price-asc, price-desc
+  const [hoveredProductId, setHoveredProductId] = useState(null);
 
   // Dashboard view tab selector
   const [activeDashboardTab, setActiveDashboardTab] = useState("shop");
@@ -554,6 +559,28 @@ export default function DashboardPage() {
     return () => subscription.unsubscribe();
   }, [router]);
 
+  // Handle URL query parameters for dynamic view state (e.g. cart drawer, tracking tab)
+  useEffect(() => {
+    if (typeof window !== "undefined" && !checkingAuth) {
+      const params = new URLSearchParams(window.location.search);
+      const openCartParam = params.get("cart");
+      if (openCartParam === "open") {
+        setIsCartOpen(true);
+      }
+      
+      const tabParam = params.get("tab");
+      if (tabParam === "tracking") {
+        setActiveDashboardTab("tracking");
+      }
+      
+      // Clean query parameters from URL to keep UI clean
+      if (openCartParam || tabParam) {
+        const newUrl = window.location.pathname + (window.location.hash || "");
+        window.history.replaceState({}, document.title, newUrl);
+      }
+    }
+  }, [checkingAuth]);
+
   // Load products from Supabase
   const fetchProducts = async () => {
     setLoadingProducts(true);
@@ -642,6 +669,9 @@ export default function DashboardPage() {
   const saveCartState = (newCart) => {
     setCart(newCart);
     localStorage.setItem("apparel_cart", JSON.stringify(newCart));
+    
+    // Dispatch custom event to sync shared Navbar badge
+    window.dispatchEvent(new Event("cart-updated"));
   };
 
   // Update cart item quantity
@@ -852,14 +882,65 @@ export default function DashboardPage() {
   const discountAmount = subtotal * (appliedDiscount / 100);
   const finalTotalAmount = subtotal - discountAmount;
 
+  const isTemplateProduct = (p) => {
+    if (!p) return false;
+    if (p.glb_file_url) return true; // Any product with a GLB file is a 3D model template/blank for the studio!
+    if (p.is_template === true) return true;
+    const cat = (p.category || "").toLowerCase().trim();
+    if (cat === "custom-template" || cat === "template" || cat.startsWith("custom-")) return true;
+    const name = (p.name || "").toLowerCase();
+    if (name.includes("template") || name.includes("blank")) return true;
+    return false;
+  };
+
+  const handleAddCatalogToCart = (product) => {
+    const itemId = `cart_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
+    const cartItem = {
+      id: itemId,
+      productId: product.id,
+      name: `${product.name} (Matte Organic Cotton)`,
+      baseTexture: product.texture_url,
+      glbUrl: product.glb_file_url,
+      thumbnailUrl: product.texture_url,
+      size: "M",
+      quantity: 1,
+      addedAt: new Date().toISOString(),
+      price: product.price || 3999,
+      fabric: "cotton"
+    };
+
+    const newCart = [...cart, cartItem];
+    saveCartState(newCart);
+
+    setActiveToast({
+      title: "🛒 Added to Cart",
+      message: `${product.name} has been added to your shopping bag!`
+    });
+  };
+
   // Filter categories
   const categories = ["all", "t-shirt", "hoodie", "jacket", "activewear"];
-  const filteredProducts = products.filter(product => {
-    if (activeCategory === "all") return true;
-    const explicitCategory = (product.category || "").toLowerCase();
-    if (explicitCategory === activeCategory) return true;
-    return product.name.toLowerCase().includes(activeCategory);
-  });
+  const filteredProducts = products
+    .filter(product => {
+      if (isTemplateProduct(product)) return false;
+      if (activeCategory !== "all") {
+        const cat = (product.category || "").toLowerCase();
+        if (cat !== activeCategory && !product.name.toLowerCase().includes(activeCategory)) return false;
+      }
+      if (searchQuery.trim()) {
+        const q = searchQuery.toLowerCase();
+        if (!product.name.toLowerCase().includes(q) && !(product.description || "").toLowerCase().includes(q)) return false;
+      }
+      return true;
+    })
+    .sort((a, b) => {
+      if (sortOrder === "price-asc") return (a.price || 3999) - (b.price || 3999);
+      if (sortOrder === "price-desc") return (b.price || 3999) - (a.price || 3999);
+      // newest: default — already sorted by created_at desc from Supabase
+      return 0;
+    });
+
+  const customizableTemplates = products.filter(product => isTemplateProduct(product));
 
   if (checkingAuth) {
     return (
@@ -877,121 +958,69 @@ export default function DashboardPage() {
       <div className="absolute top-0 left-1/4 w-[500px] h-[500px] bg-indigo-500/10 rounded-full blur-[120px] pointer-events-none" />
       <div className="absolute top-1/3 right-1/4 w-[600px] h-[600px] bg-purple-500/5 rounded-full blur-[140px] pointer-events-none" />
 
-      {/* Main Header Bar */}
-      <header className="border-b border-zinc-900 bg-zinc-950/60 backdrop-blur-md sticky top-0 z-40">
-        <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 h-16 flex items-center justify-between">
-          {/* Brand */}
-          <Link href="/dashboard" className="flex items-center gap-3">
-            <div className="w-8 h-8 bg-gradient-to-tr from-indigo-500 to-purple-600 rounded-lg flex items-center justify-center shadow-md">
-              <Sparkles className="w-4 h-4 text-white" />
-            </div>
-            <span className="font-extrabold tracking-tight text-sm">
-              THREAD <span className="bg-gradient-to-r from-indigo-400 to-purple-500 bg-clip-text text-transparent">3D</span> SHOP
-            </span>
-          </Link>
-
-          {/* Nav Actions */}
-          <div className="flex items-center gap-4">
-            {(!process.env.NEXT_PUBLIC_ADMIN_EMAIL || process.env.NEXT_PUBLIC_ADMIN_EMAIL.split(",").map(e => e.trim().toLowerCase()).includes(session?.user?.email?.toLowerCase())) && (
-              <Link
-                href="/admin"
-                className="text-xs font-semibold px-3 py-1.5 bg-zinc-900 border border-zinc-800 hover:border-zinc-700 text-zinc-400 hover:text-white rounded-lg transition-colors cursor-pointer"
-              >
-                Admin Control
-              </Link>
+      {/* Shared Navbar Header */}
+      <Navbar>
+        {/* Customer Notifications Center Bell Trigger */}
+        <div className="relative">
+          <button
+            onClick={() => setShowNotifications(!showNotifications)}
+            className="relative p-2 hover:bg-zinc-900 rounded-lg border border-zinc-900 hover:border-zinc-800 text-zinc-400 hover:text-white transition-all cursor-pointer"
+            title="Notifications Ledger"
+          >
+            <span className="text-base select-none">🔔</span>
+            {notifications.filter(n => !n.read).length > 0 && (
+              <span className="absolute -top-1 -right-1 w-4 h-4 bg-indigo-600 text-white rounded-full text-[8px] font-extrabold flex items-center justify-center animate-pulse shadow-md">
+                {notifications.filter(n => !n.read).length}
+              </span>
             )}
+          </button>
 
-            {/* Shopping Cart Trigger */}
-            <button
-              onClick={() => {
-                setIsCheckingOut(false);
-                setIsCartOpen(true);
-              }}
-              className="relative p-2 hover:bg-zinc-900 rounded-lg border border-zinc-900 hover:border-zinc-800 text-zinc-400 hover:text-white transition-all cursor-pointer"
-            >
-              <ShoppingBag className="w-5 h-5" />
-              {totalItems > 0 && (
-                <span className="absolute -top-1 -right-1 w-4.5 h-4.5 bg-emerald-500 text-white rounded-full text-[9px] font-bold flex items-center justify-center animate-bounce shadow-md">
-                  {totalItems}
-                </span>
-              )}
-            </button>
-
-            {/* Customer Notifications Center Bell Trigger */}
-            <div className="relative">
-              <button
-                onClick={() => setShowNotifications(!showNotifications)}
-                className="relative p-2 hover:bg-zinc-900 rounded-lg border border-zinc-900 hover:border-zinc-800 text-zinc-400 hover:text-white transition-all cursor-pointer"
-                title="Notifications Ledger"
-              >
-                <span className="text-base select-none">🔔</span>
-                {notifications.filter(n => !n.read).length > 0 && (
-                  <span className="absolute -top-1 -right-1 w-4 h-4 bg-indigo-600 text-white rounded-full text-[8px] font-extrabold flex items-center justify-center animate-pulse shadow-md">
-                    {notifications.filter(n => !n.read).length}
-                  </span>
+          {/* Notifications Popover Dropdown */}
+          {showNotifications && (
+            <div className="absolute right-0 mt-2.5 w-80 bg-zinc-950 border border-zinc-900 rounded-2xl shadow-2xl overflow-hidden z-50 animate-in fade-in slide-in-from-top-3 duration-150">
+              <div className="bg-zinc-900/60 border-b border-zinc-850 px-4 py-3 flex justify-between items-center select-none">
+                <span className="font-extrabold text-xs text-white">Notifications Center</span>
+                {notifications.some(n => !n.read) && (
+                  <button
+                    onClick={() => updateNotifications(notifications.map(n => ({ ...n, read: true })))}
+                    className="text-[9px] font-bold text-indigo-400 hover:text-indigo-300 transition-colors cursor-pointer"
+                  >
+                    Mark all read
+                  </button>
                 )}
-              </button>
-
-              {/* Notifications Popover Dropdown */}
-              {showNotifications && (
-                <div className="absolute right-0 mt-2.5 w-80 bg-zinc-950 border border-zinc-900 rounded-2xl shadow-2xl overflow-hidden z-50 animate-in fade-in slide-in-from-top-3 duration-150">
-                  <div className="bg-zinc-900/60 border-b border-zinc-850 px-4 py-3 flex justify-between items-center select-none">
-                    <span className="font-extrabold text-xs text-white">Notifications Center</span>
-                    {notifications.some(n => !n.read) && (
-                      <button
-                        onClick={() => updateNotifications(notifications.map(n => ({ ...n, read: true })))}
-                        className="text-[9px] font-bold text-indigo-400 hover:text-indigo-300 transition-colors cursor-pointer"
-                      >
-                        Mark all read
-                      </button>
-                    )}
+              </div>
+              <div className="max-h-64 overflow-y-auto divide-y divide-zinc-900/40">
+                {notifications.length === 0 ? (
+                  <div className="p-6 text-center text-[10px] text-zinc-600 font-medium select-none">
+                    No new notifications.
                   </div>
-                  <div className="max-h-64 overflow-y-auto divide-y divide-zinc-900/40">
-                    {notifications.length === 0 ? (
-                      <div className="p-6 text-center text-[10px] text-zinc-600 font-medium select-none">
-                        No new notifications.
+                ) : (
+                  notifications.map(noti => (
+                    <div 
+                      key={noti.id} 
+                      onClick={() => {
+                        // Mark as read when clicked
+                        updateNotifications(notifications.map(n => n.id === noti.id ? { ...n, read: true } : n));
+                      }}
+                      className={`p-3.5 transition-colors cursor-pointer hover:bg-zinc-900/20 text-left ${noti.read ? "opacity-60" : "bg-indigo-950/5"}`}
+                    >
+                      <div className="flex justify-between items-start gap-1">
+                        <h4 className={`text-[10px] font-extrabold ${noti.read ? "text-zinc-400" : "text-white"}`}>
+                          {noti.title}
+                        </h4>
+                        <span className="text-[7px] text-zinc-500 font-mono shrink-0">{noti.time}</span>
                       </div>
-                    ) : (
-                      notifications.map(noti => (
-                        <div 
-                          key={noti.id} 
-                          onClick={() => {
-                            // Mark as read when clicked
-                            updateNotifications(notifications.map(n => n.id === noti.id ? { ...n, read: true } : n));
-                          }}
-                          className={`p-3.5 transition-colors cursor-pointer hover:bg-zinc-900/20 text-left ${noti.read ? "opacity-60" : "bg-indigo-950/5"}`}
-                        >
-                          <div className="flex justify-between items-start gap-1">
-                            <h4 className={`text-[10px] font-extrabold ${noti.read ? "text-zinc-400" : "text-white"}`}>
-                              {noti.title}
-                            </h4>
-                            <span className="text-[7px] text-zinc-500 font-mono shrink-0">{noti.time}</span>
-                          </div>
-                          <p className="text-[9px] text-zinc-400 leading-relaxed font-medium mt-1">
-                            {noti.message}
-                          </p>
-                        </div>
-                      ))
-                    )}
-                  </div>
-                </div>
-              )}
+                      <p className="text-[9px] text-zinc-400 leading-relaxed font-medium mt-1">
+                        {noti.message}
+                      </p>
+                    </div>
+                  ))
+                )}
+              </div>
             </div>
-
-            {/* User Dropdown */}
-            <div className="flex items-center gap-3 border-l border-zinc-900 pl-4">
-              <span className="text-xs text-zinc-500 hidden md:inline">{session?.user?.email}</span>
-              <button
-                onClick={handleSignOut}
-                className="p-2 hover:bg-zinc-900 border border-zinc-900 hover:border-zinc-800 rounded-lg text-zinc-400 hover:text-white transition-colors cursor-pointer"
-                title="Sign Out"
-              >
-                <LogOut className="w-4 h-4" />
-              </button>
-            </div>
-          </div>
+          )}
         </div>
-      </header>
+      </Navbar>
 
       {/* Main Workspace */}
       <main className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 mt-12 z-10 relative">
@@ -1013,18 +1042,31 @@ export default function DashboardPage() {
         </section>
 
         {/* Primary View Switcher: Shop vs Tracking */}
-        <section className="mb-12 max-w-sm mx-auto bg-zinc-900/60 border border-zinc-900 rounded-xl p-1 flex shadow-inner">
+        <section className="mb-12 max-w-xl mx-auto bg-zinc-900/60 border border-zinc-900 rounded-xl p-1 flex shadow-inner gap-1">
           <button
             onClick={() => setActiveDashboardTab("shop")}
             className={`flex-1 text-center py-2.5 rounded-lg text-xs font-bold transition-all uppercase tracking-wider cursor-pointer flex items-center justify-center gap-1.5 ${
               activeDashboardTab === "shop"
-                ? "bg-indigo-600 border border-indigo-500 text-white shadow-lg shadow-indigo-600/10"
-                : "text-zinc-500 hover:text-zinc-300"
+                ? "bg-indigo-600 border-indigo-500 text-white shadow-lg shadow-indigo-600/10 font-extrabold"
+                : "text-zinc-500 hover:text-zinc-350"
             }`}
           >
-            <Sparkles className="w-3.5 h-3.5" />
-            <span>Shop Studio</span>
+            <ShoppingBag className="w-3.5 h-3.5" />
+            <span>Shop Catalog</span>
           </button>
+          
+          <button
+            onClick={() => setActiveDashboardTab("3d-design")}
+            className={`flex-1 text-center py-2.5 rounded-lg text-xs font-bold transition-all uppercase tracking-wider cursor-pointer flex items-center justify-center gap-1.5 ${
+              activeDashboardTab === "3d-design"
+                ? "bg-indigo-600 border-indigo-500 text-white shadow-lg shadow-indigo-600/10 font-extrabold"
+                : "text-zinc-500 hover:text-zinc-350"
+            }`}
+          >
+            <Sparkles className="w-3.5 h-3.5 animate-pulse text-indigo-400" />
+            <span>3D Design Studio</span>
+          </button>
+
           <button
             onClick={() => {
               setActiveDashboardTab("tracking");
@@ -1032,11 +1074,11 @@ export default function DashboardPage() {
             }}
             className={`flex-1 text-center py-2.5 rounded-lg text-xs font-bold transition-all uppercase tracking-wider cursor-pointer flex items-center justify-center gap-1.5 ${
               activeDashboardTab === "tracking"
-                ? "bg-indigo-600 border border-indigo-500 text-white shadow-lg shadow-indigo-600/10"
-                : "text-zinc-500 hover:text-zinc-300"
+                ? "bg-indigo-600 border-indigo-500 text-white shadow-lg shadow-indigo-600/10 font-extrabold"
+                : "text-zinc-500 hover:text-zinc-350"
             }`}
           >
-            <ShoppingBag className="w-3.5 h-3.5" />
+            <Sparkles className="w-3.5 h-3.5" />
             <span>Track Orders</span>
             {pastOrders.length > 0 && (
               <span className="bg-zinc-850 text-indigo-400 border border-indigo-500/20 text-[9px] font-bold px-1.5 py-0.5 rounded-full">
@@ -1048,21 +1090,55 @@ export default function DashboardPage() {
 
         {activeDashboardTab === "shop" ? (
           <>
-            {/* Categorization & Filter Pills */}
-            <section className="mb-10 flex items-center justify-center flex-wrap gap-2">
-              {categories.map((category) => (
-                <button
-                  key={category}
-                  onClick={() => setActiveCategory(category)}
-                  className={`text-xs font-semibold px-4 py-2 rounded-full border transition-all uppercase tracking-wider cursor-pointer ${
-                    activeCategory === category
-                      ? "bg-indigo-600 border-indigo-500 text-white shadow-lg shadow-indigo-600/10"
-                      : "bg-zinc-900/40 border-zinc-900 hover:border-zinc-800 text-zinc-400 hover:text-white hover:bg-zinc-900/60"
-                  }`}
+            {/* Search + Sort + Category Filter Bar */}
+            <section className="mb-8 space-y-4">
+              {/* Search + Sort row */}
+              <div className="flex items-center gap-3 flex-wrap">
+                <div className="relative flex-1 min-w-[200px]">
+                  <input
+                    type="text"
+                    value={searchQuery}
+                    onChange={(e) => setSearchQuery(e.target.value)}
+                    placeholder="Search apparel by name or style..."
+                    className="w-full bg-zinc-900/60 border border-zinc-800 hover:border-zinc-700 focus:border-indigo-500 rounded-xl pl-10 pr-4 py-2.5 text-xs text-white placeholder-zinc-600 focus:outline-none font-semibold transition-colors"
+                  />
+                  <svg className="w-3.5 h-3.5 text-zinc-600 absolute left-3.5 top-3" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.35-4.35"/></svg>
+                  {searchQuery && (
+                    <button onClick={() => setSearchQuery("")} className="absolute right-3 top-2.5 text-zinc-600 hover:text-zinc-400 cursor-pointer">
+                      <X className="w-3.5 h-3.5" />
+                    </button>
+                  )}
+                </div>
+                <select
+                  value={sortOrder}
+                  onChange={(e) => setSortOrder(e.target.value)}
+                  className="bg-zinc-900/60 border border-zinc-800 hover:border-zinc-700 focus:border-indigo-500 rounded-xl px-3.5 py-2.5 text-xs text-zinc-300 focus:outline-none font-semibold cursor-pointer transition-colors"
                 >
-                  {category === "all" ? "Explore All" : `${category}s`}
-                </button>
-              ))}
+                  <option value="newest">Newest First</option>
+                  <option value="price-asc">Price: Low to High</option>
+                  <option value="price-desc">Price: High to Low</option>
+                </select>
+              </div>
+
+              {/* Category pills */}
+              <div className="flex items-center gap-2 flex-wrap">
+                {categories.map((category) => (
+                  <button
+                    key={category}
+                    onClick={() => setActiveCategory(category)}
+                    className={`text-xs font-semibold px-4 py-1.5 rounded-full border transition-all uppercase tracking-wider cursor-pointer ${
+                      activeCategory === category
+                        ? "bg-indigo-600 border-indigo-500 text-white shadow-md shadow-indigo-600/10"
+                        : "bg-zinc-900/40 border-zinc-800/80 hover:border-zinc-700 text-zinc-500 hover:text-white hover:bg-zinc-900/60"
+                    }`}
+                  >
+                    {category === "all" ? "All" : category.charAt(0).toUpperCase() + category.slice(1) + "s"}
+                  </button>
+                ))}
+                {(searchQuery || activeCategory !== "all") && (
+                  <span className="text-[10px] text-zinc-500 font-medium ml-1">{filteredProducts.length} result{filteredProducts.length !== 1 ? 's' : ''}</span>
+                )}
+              </div>
             </section>
 
             {/* Product Catalog Grid */}
@@ -1070,32 +1146,201 @@ export default function DashboardPage() {
               {loadingProducts ? (
                 <div className="py-24 flex flex-col items-center justify-center text-zinc-500">
                   <Loader2 className="w-8 h-8 animate-spin text-zinc-400 mb-3" />
-                  <p className="text-xs">Fetching custom canvases from database...</p>
+                  <p className="text-xs">Fetching catalog items...</p>
                 </div>
               ) : filteredProducts.length === 0 ? (
-                <div className="py-20 text-center border border-dashed border-zinc-850 rounded-2xl bg-zinc-900/10 max-w-xl mx-auto">
+                <div className="py-20 text-center border border-dashed border-zinc-800 rounded-2xl bg-zinc-900/10 max-w-xl mx-auto">
                   <Layers className="w-12 h-12 mx-auto text-zinc-700 mb-4" />
-                  <p className="text-sm font-semibold text-zinc-400">No matching garments found.</p>
-                  <p className="text-xs text-zinc-500 mt-1.5">Please check back later or add new canvases via the admin dashboard.</p>
-                  {(!process.env.NEXT_PUBLIC_ADMIN_EMAIL || process.env.NEXT_PUBLIC_ADMIN_EMAIL.split(",").map(e => e.trim().toLowerCase()).includes(session?.user?.email?.toLowerCase())) && (
-                    <Link
-                      href="/admin"
-                      className="mt-5 inline-flex items-center gap-1.5 text-xs font-semibold bg-indigo-600 hover:bg-indigo-500 text-white px-4 py-2 rounded-xl transition-all shadow-md cursor-pointer"
-                    >
-                      <Plus className="w-3.5 h-3.5" />
-                      <span>Upload Base Canvas</span>
-                    </Link>
+                  <p className="text-sm font-semibold text-zinc-400">
+                    {searchQuery ? `No results for "${searchQuery}"` : "No apparel found in this category."}
+                  </p>
+                  {(searchQuery || activeCategory !== "all") && (
+                    <button onClick={() => { setSearchQuery(""); setActiveCategory("all"); }} className="mt-3 text-xs text-indigo-400 hover:underline font-bold cursor-pointer">Clear filters</button>
                   )}
                 </div>
               ) : (
-                <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-8">
-                  {filteredProducts.map((product) => (
+                <div className="grid grid-cols-2 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-5 animate-fade-in">
+                  {filteredProducts.map((product) => {
+                    const galleryImages = product.gallery_urls
+                      ? product.gallery_urls.split(",").map(u => u.trim()).filter(Boolean)
+                      : [];
+                    const hoverImage = galleryImages.length > 0 ? galleryImages[0] : null;
+                    const isHovered = hoveredProductId === product.id;
+                    return (
+                      <div
+                        key={product.id}
+                        className="bg-zinc-900/25 border border-zinc-900/80 hover:border-zinc-700 rounded-2xl overflow-hidden transition-all flex flex-col group shadow-sm hover:shadow-xl hover:shadow-zinc-950/60 cursor-pointer"
+                        onMouseEnter={() => setHoveredProductId(product.id)}
+                        onMouseLeave={() => setHoveredProductId(null)}
+                        onClick={() => router.push(`/product/${product.id}`)}
+                      >
+                        {/* Portrait Image Frame — Amazon style */}
+                        <div className="relative w-full bg-zinc-950 overflow-hidden" style={{ aspectRatio: '3/4' }}>
+                          {/* Main image */}
+                          <img
+                            src={product.texture_url}
+                            alt={product.name}
+                            className={`absolute inset-0 w-full h-full object-cover transition-all duration-500 ${hoverImage && isHovered ? "opacity-0" : "opacity-90 group-hover:opacity-100"}`}
+                            onError={(e) => { e.target.style.display = 'none'; }}
+                          />
+                          {/* Hover / gallery image */}
+                          {hoverImage && (
+                            <img
+                              src={hoverImage}
+                              alt={`${product.name} alternate`}
+                              className={`absolute inset-0 w-full h-full object-cover transition-all duration-500 ${isHovered ? "opacity-100 scale-105" : "opacity-0 scale-100"}`}
+                              onError={(e) => { e.target.style.display = 'none'; }}
+                            />
+                          )}
+                          {/* Category badge */}
+                          {product.category && (
+                            <div className="absolute top-2 left-2 bg-zinc-950/80 border border-zinc-800 text-[9px] text-zinc-400 font-bold px-2 py-0.5 rounded-full uppercase tracking-wider backdrop-blur-sm">
+                              {product.category}
+                            </div>
+                          )}
+                          {/* Multiple photos indicator */}
+                          {galleryImages.length > 0 && (
+                            <div className="absolute top-2 right-2 bg-zinc-950/80 border border-zinc-800 text-[9px] text-zinc-400 font-bold px-2 py-0.5 rounded-full backdrop-blur-sm">
+                              {galleryImages.length + 1} photos
+                            </div>
+                          )}
+                          {/* Quick add overlay on hover */}
+                          <div className={`absolute inset-x-0 bottom-0 p-3 bg-gradient-to-t from-zinc-950 to-transparent transition-opacity duration-200 ${isHovered ? "opacity-100" : "opacity-0"}`}>
+                            <button
+                              onClick={(e) => { e.stopPropagation(); handleAddCatalogToCart(product); }}
+                              className="w-full py-2 bg-indigo-600 hover:bg-indigo-500 text-white text-[10px] font-bold rounded-xl flex items-center justify-center gap-1.5 transition-colors cursor-pointer"
+                            >
+                              <CartIcon className="w-3 h-3" />
+                              Quick Add
+                            </button>
+                          </div>
+                        </div>
+
+                        {/* Product Info */}
+                        <div className="p-3 flex flex-col gap-2 flex-1">
+                          <h3 className="font-bold text-xs text-zinc-200 group-hover:text-white transition-colors line-clamp-2 leading-snug">
+                            {product.name}
+                          </h3>
+                          <div className="flex items-center justify-between mt-auto pt-1">
+                            <span className="text-sm font-black text-indigo-400">
+                              ₹{product.price ? product.price.toLocaleString('en-IN') : "3,999"}
+                            </span>
+                            <span className="text-[9px] text-emerald-500 font-bold">Free Ship</span>
+                          </div>
+                          <Link
+                            href={`/product/${product.id}`}
+                            onClick={(e) => e.stopPropagation()}
+                            className="w-full py-2 bg-zinc-800/60 hover:bg-zinc-800 border border-zinc-700/40 hover:border-zinc-600 text-zinc-300 hover:text-white rounded-xl text-[10px] font-bold text-center transition-all"
+                          >
+                            View Details
+                          </Link>
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              )}
+            </section>
+          </>
+        ) : activeDashboardTab === "3d-design" ? (
+          <div className="space-y-12">
+            
+            {/* Decal Preload Dropzone Section */}
+            <section className="max-w-2xl mx-auto bg-zinc-900/20 border border-zinc-900 p-6 rounded-3xl backdrop-blur-xl relative overflow-hidden text-center">
+              <div className="absolute top-0 right-0 w-32 h-32 bg-indigo-500/5 rounded-full blur-2xl" />
+              <h3 className="text-sm font-bold text-white flex items-center justify-center gap-2 mb-2 select-none">
+                <Sparkles className="w-4 h-4 text-indigo-400 animate-pulse" />
+                <span>Preload Custom Design Graphics</span>
+              </h3>
+              <p className="text-[11px] text-zinc-500 mb-5 leading-relaxed">
+                (Optional) Select a transparent PNG decal or logo from your device first. It will be preloaded on the 3D customizer canvas automatically when you open a blank template!
+              </p>
+
+              <div className="relative border-2 border-dashed border-zinc-800 hover:border-zinc-700 bg-zinc-950/40 rounded-2xl p-6 transition-colors">
+                <input
+                  type="file"
+                  accept="image/*"
+                  onChange={(e) => {
+                    if (e.target.files && e.target.files[0]) {
+                      const file = e.target.files[0];
+                      const reader = new FileReader();
+                      reader.onload = (event) => {
+                        const dataUrl = event.target.result;
+                        setPreloadedDecalDataUrl(dataUrl);
+                        localStorage.setItem("apparel_preloaded_decal", dataUrl);
+                        setActiveToast({
+                          title: "🎨 Graphic Preloaded",
+                          message: "Your custom decal is cached! Redirecting to 3D Customizer Studio..."
+                        });
+                        setTimeout(() => {
+                          router.push("/studio");
+                        }, 800);
+                      };
+                      reader.readAsDataURL(file);
+                    }
+                  }}
+                  className="absolute inset-0 w-full h-full opacity-0 cursor-pointer"
+                />
+                
+                {preloadedDecalDataUrl ? (
+                  <div className="flex flex-col items-center justify-center gap-3">
+                    <img 
+                      src={preloadedDecalDataUrl} 
+                      alt="Preloaded decal preview" 
+                      className="w-16 h-16 object-contain rounded-lg border border-zinc-800 bg-zinc-900 p-1"
+                    />
+                    <div className="text-center animate-fade-in">
+                      <p className="text-xs font-bold text-emerald-400">Custom Decal Loaded!</p>
+                      <button
+                        onClick={(e) => {
+                          e.preventDefault();
+                          setPreloadedDecalDataUrl(null);
+                        }}
+                        className="text-[10px] text-rose-400 hover:text-rose-350 mt-1 select-none font-bold underline underline-offset-2 cursor-pointer"
+                      >
+                        Remove Decal
+                      </button>
+                    </div>
+                  </div>
+                ) : (
+                  <div className="flex flex-col items-center justify-center py-2 text-center text-zinc-400 select-none">
+                    <span className="text-2xl mb-1.5">🖼️</span>
+                    <p className="text-xs font-bold">Click to select graphic</p>
+                    <p className="text-[10px] text-zinc-650 mt-1">Supports PNG, JPG transparent stickers</p>
+                  </div>
+                )}
+              </div>
+            </section>
+
+            {/* Configurator Templates Selection Grid */}
+            <section className="space-y-6">
+              <div className="border-b border-zinc-900 pb-3 select-none">
+                <h3 className="text-xs font-bold text-zinc-400 uppercase tracking-widest flex items-center gap-2">
+                  <Layers className="w-4 h-4 text-indigo-400" />
+                  <span>Choose Customizable Blanks ({customizableTemplates.length})</span>
+                </h3>
+                <p className="text-[10px] text-zinc-500 mt-1">Select a template canvas model mesh below to enter the 3D customizer.</p>
+              </div>
+
+              {loadingProducts ? (
+                <div className="py-20 flex flex-col items-center justify-center text-zinc-500">
+                  <Loader2 className="w-8 h-8 animate-spin text-zinc-400 mb-3" />
+                  <p className="text-xs">Fetching template models...</p>
+                </div>
+              ) : customizableTemplates.length === 0 ? (
+                <div className="py-16 text-center border border-dashed border-zinc-850 rounded-2xl bg-zinc-900/10 max-w-xl mx-auto select-none">
+                  <Layers className="w-12 h-12 mx-auto text-zinc-700 mb-3" />
+                  <p className="text-xs text-zinc-500 font-semibold">No blank configurator templates registered.</p>
+                </div>
+              ) : (
+                <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-8 animate-fade-in">
+                  {customizableTemplates.map((product) => (
                     <div 
                       key={product.id}
-                      className="bg-zinc-900/30 border border-zinc-900/80 hover:border-zinc-800 rounded-2xl p-5 hover:bg-zinc-900/60 transition-all flex flex-col justify-between group shadow-sm overflow-hidden"
+                      className="bg-zinc-900/30 border border-zinc-900/80 hover:border-indigo-950/40 rounded-2xl p-5 hover:bg-zinc-900/60 transition-all flex flex-col justify-between group shadow-sm overflow-hidden"
                     >
                       <div>
-                        {/* Catalog Image frame */}
+                        {/* Canvas Image frame */}
                         <div className="w-full aspect-[4/3] bg-zinc-950 border border-zinc-850 rounded-xl overflow-hidden relative mb-4.5 flex items-center justify-center group-hover:border-zinc-800 transition-all">
                           <img 
                             src={product.texture_url} 
@@ -1105,11 +1350,9 @@ export default function DashboardPage() {
                               e.target.style.display = 'none';
                             }}
                           />
-                          
-                          {/* Interactive Badge */}
                           <div className="absolute inset-0 bg-gradient-to-t from-zinc-950 via-transparent to-transparent opacity-0 group-hover:opacity-100 transition-opacity flex items-end p-4">
-                            <span className="text-[9px] bg-indigo-600/90 text-white px-2 py-0.5 rounded font-mono tracking-tighter truncate max-w-full uppercase font-bold">
-                              Ready for 3D Customizer
+                            <span className="text-[9px] bg-indigo-600/95 text-white px-2 py-0.5 rounded font-mono uppercase font-extrabold animate-pulse">
+                              Designable Canvas
                             </span>
                           </div>
                         </div>
@@ -1118,31 +1361,37 @@ export default function DashboardPage() {
                           {product.name}
                         </h3>
                         <p className="text-xs text-zinc-500 mt-1 select-none">
-                          Includes 3D interactive mesh & printable canvas zones
+                          Interactive 3D configurator template
                         </p>
                       </div>
 
-                      {/* Call to Customize Button */}
+                      {/* Customize trigger button */}
                       <div className="border-t border-zinc-900 mt-5 pt-4 flex items-center justify-between">
                         <span className="text-sm font-extrabold text-zinc-300">
-                          ₹{product.price ? product.price.toLocaleString('en-IN') : "3,999"} 
-                          <span className="text-[10px] text-zinc-500 font-normal"> base price</span>
+                          ₹{product.price ? product.price.toLocaleString('en-IN') : "3,999"}
                         </span>
                         
-                        <Link
-                          href={`/?product=${getSlug(product.name)}`}
-                          className="px-4 py-2 bg-indigo-500/10 border border-indigo-500/20 group-hover:bg-indigo-600 group-hover:text-white text-indigo-400 rounded-xl transition-all flex items-center justify-center gap-1.5 text-xs font-semibold"
+                        <button
+                          onClick={() => {
+                            if (preloadedDecalDataUrl) {
+                              localStorage.setItem("apparel_preloaded_decal", preloadedDecalDataUrl);
+                            } else {
+                              localStorage.removeItem("apparel_preloaded_decal");
+                            }
+                            router.push(`/studio?product=${getSlug(product.name)}`);
+                          }}
+                          className="px-4 py-2 bg-gradient-to-r from-indigo-500 to-purple-600 hover:from-indigo-600 hover:to-purple-700 text-white rounded-xl shadow-md transition-all flex items-center justify-center gap-1.5 text-xs font-bold cursor-pointer"
                         >
+                          <Sparkles className="w-3.5 h-3.5 animate-pulse" />
                           <span>Design in 3D</span>
-                          <ArrowRight className="w-3.5 h-3.5 transform group-hover:translate-x-0.5 transition-transform" />
-                        </Link>
+                        </button>
                       </div>
                     </div>
                   ))}
                 </div>
               )}
             </section>
-          </>
+          </div>
         ) : (
           /* PAST ORDERS TRACKER VIEW */
           <div className="space-y-8 max-w-4xl mx-auto">

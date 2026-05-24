@@ -19,5 +19,24 @@ CREATE TABLE IF NOT EXISTS system_logs (
 -- 4. Disable RLS for system logs to ensure clean admin updates (or configure policy as preferred)
 ALTER TABLE system_logs DISABLE ROW LEVEL SECURITY;
 
--- 5. Add category column to products table (Category Selector Integration)
 ALTER TABLE products ADD COLUMN IF NOT EXISTS category TEXT DEFAULT 't-shirt';
+
+-- 6. Add template indicator, description, and gallery columns to products table
+ALTER TABLE products ADD COLUMN IF NOT EXISTS is_template BOOLEAN DEFAULT FALSE;
+ALTER TABLE products ADD COLUMN IF NOT EXISTS description TEXT DEFAULT '';
+ALTER TABLE products ADD COLUMN IF NOT EXISTS gallery_urls TEXT DEFAULT '';
+
+-- 7. Create the product reviews table (Amazon reviews tracker)
+CREATE TABLE IF NOT EXISTS product_reviews (
+  id BIGSERIAL PRIMARY KEY,
+  created_at TIMESTAMPTZ DEFAULT NOW(),
+  product_id TEXT,
+  rating INT CHECK (rating >= 1 AND rating <= 5),
+  title TEXT,
+  comment TEXT,
+  author TEXT
+);
+
+-- 8. Disable RLS for product reviews to ensure clean guest submissions (or configure policy as preferred)
+ALTER TABLE product_reviews DISABLE ROW LEVEL SECURITY;
+
