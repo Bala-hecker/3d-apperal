@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useState, useEffect } from "react";
+import React, { useState, useEffect, useRef } from "react";
 import Link from "next/link";
 import { supabase } from "@/lib/supabase";
 import Navbar from "@/components/Navbar";
@@ -16,6 +16,299 @@ import {
   MousePointerClick,
   CheckCircle
 } from "lucide-react";
+import * as THREE from "three";
+
+function InteractiveThreeMockup({ selectedFabric }) {
+  const containerRef = useRef(null);
+  const canvasRef = useRef(null);
+  const [preset, setPreset] = useState("sunset"); // sunset, neon, studio
+  const [stats, setStats] = useState({ verts: 14192, fps: 60, scale: 1.0 });
+  const meshRef = useRef(null);
+  const lightsRef = useRef({});
+
+  // Trigger material update when selectedFabric changes
+  useEffect(() => {
+    if (!meshRef.current) return;
+    const mesh = meshRef.current;
+    
+    // Update material based on fabric
+    let roughness = 0.85;
+    let metalness = 0.1;
+    let color = 0x4f46e5; // Indigo
+    let clearcoat = 0.0;
+    
+    if (selectedFabric === "polyester") {
+      roughness = 0.25;
+      metalness = 0.65;
+      color = 0x8b5cf6; // Purple
+      clearcoat = 0.5;
+    } else if (selectedFabric === "fleece") {
+      roughness = 1.0;
+      metalness = 0.05;
+      color = 0xec4899; // Pink
+      clearcoat = 0.0;
+    }
+
+    mesh.material.roughness = roughness;
+    mesh.material.metalness = metalness;
+    mesh.material.color.setHex(color);
+    if (mesh.material.clearcoat !== undefined) {
+      mesh.material.clearcoat = clearcoat;
+    }
+    mesh.material.needsUpdate = true;
+  }, [selectedFabric]);
+
+  // Trigger lights update when preset changes
+  useEffect(() => {
+    const lights = lightsRef.current;
+    if (!lights.dir1 || !lights.dir2) return;
+
+    if (preset === "sunset") {
+      lights.dir1.color.setHex(0xff7a00); // Warm orange
+      lights.dir1.intensity = 1.5;
+      lights.dir2.color.setHex(0xa5b4fc); // Soft indigo
+      lights.dir2.intensity = 0.8;
+    } else if (preset === "neon") {
+      lights.dir1.color.setHex(0xff007f); // Hot pink
+      lights.dir1.intensity = 1.8;
+      lights.dir2.color.setHex(0x00f0ff); // Electric cyan
+      lights.dir2.intensity = 1.2;
+    } else if (preset === "studio") {
+      lights.dir1.color.setHex(0xffffff); // Pure white
+      lights.dir1.intensity = 1.2;
+      lights.dir2.color.setHex(0xcccccc); // Neutral grey
+      lights.dir2.intensity = 0.5;
+    }
+  }, [preset]);
+
+  useEffect(() => {
+    if (typeof window === "undefined" || !containerRef.current || !canvasRef.current) return;
+
+    const width = containerRef.current.clientWidth || 300;
+    const height = containerRef.current.clientHeight || 200;
+
+    const scene = new THREE.Scene();
+    
+    // Camera
+    const camera = new THREE.PerspectiveCamera(45, width / height, 0.1, 100);
+    camera.position.z = 4.5;
+
+    // Renderer
+    const renderer = new THREE.WebGLRenderer({
+      canvas: canvasRef.current,
+      antialias: true,
+      alpha: true
+    });
+    renderer.setSize(width, height);
+    renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+
+    // Lights
+    const ambientLight = new THREE.AmbientLight(0xffffff, 0.4);
+    scene.add(ambientLight);
+
+    const dir1 = new THREE.DirectionalLight(0xff7a00, 1.5);
+    dir1.position.set(2, 4, 3);
+    scene.add(dir1);
+
+    const dir2 = new THREE.DirectionalLight(0xa5b4fc, 0.8);
+    dir2.position.set(-2, -2, -2);
+    scene.add(dir2);
+
+    lightsRef.current = { dir1, dir2 };
+
+    // Geometry - complex curved shape showing shadows and details
+    const geometry = new THREE.TorusKnotGeometry(0.8, 0.28, 100, 16);
+    
+    // High premium physical material
+    const material = new THREE.MeshPhysicalMaterial({
+      color: 0x4f46e5,
+      roughness: 0.85,
+      metalness: 0.1,
+      clearcoat: 0.0,
+      clearcoatRoughness: 0.1,
+      flatShading: false
+    });
+
+    const mesh = new THREE.Mesh(geometry, material);
+    scene.add(mesh);
+    meshRef.current = mesh;
+
+    // Interactive mouse drag rotation
+    let isDragging = false;
+    let previousMousePosition = { x: 0, y: 0 };
+
+    const handleMouseDown = () => { isDragging = true; };
+    const handleMouseMove = (e) => {
+      if (!isDragging) return;
+      const deltaMove = {
+        x: e.offsetX - previousMousePosition.x,
+        y: e.offsetY - previousMousePosition.y
+      };
+
+      mesh.rotation.y += deltaMove.x * 0.007;
+      mesh.rotation.x += deltaMove.y * 0.007;
+
+      previousMousePosition = { x: e.offsetX, y: e.offsetY };
+    };
+    const handleMouseUpOrLeave = () => { isDragging = false; };
+
+    const canvasElement = canvasRef.current;
+    canvasElement.addEventListener("mousedown", handleMouseDown);
+    canvasElement.addEventListener("mousemove", handleMouseMove);
+    canvasElement.addEventListener("mouseup", handleMouseUpOrLeave);
+    canvasElement.addEventListener("mouseleave", handleMouseUpOrLeave);
+
+    // Support touch
+    const handleTouchStart = (e) => {
+      isDragging = true;
+      const touch = e.touches[0];
+      const rect = e.target.getBoundingClientRect();
+      previousMousePosition = {
+        x: touch.clientX - rect.left,
+        y: touch.clientY - rect.top
+      };
+    };
+    const handleTouchMove = (e) => {
+      if (!isDragging) return;
+      const touch = e.touches[0];
+      const rect = e.target.getBoundingClientRect();
+      const currentPos = {
+        x: touch.clientX - rect.left,
+        y: touch.clientY - rect.top
+      };
+      const deltaMove = {
+        x: currentPos.x - previousMousePosition.x,
+        y: currentPos.y - previousMousePosition.y
+      };
+
+      mesh.rotation.y += deltaMove.x * 0.007;
+      mesh.rotation.x += deltaMove.y * 0.007;
+
+      previousMousePosition = currentPos;
+    };
+    canvasElement.addEventListener("touchstart", handleTouchStart, { passive: true });
+    canvasElement.addEventListener("touchmove", handleTouchMove, { passive: true });
+    canvasElement.addEventListener("touchend", handleMouseUpOrLeave);
+
+    // Animation Loop
+    let animationFrameId;
+    let lastTime = performance.now();
+    let frameCount = 0;
+    
+    const animate = () => {
+      animationFrameId = requestAnimationFrame(animate);
+      
+      // Auto-rotation when not dragging
+      if (!isDragging) {
+        mesh.rotation.y += 0.006;
+        mesh.rotation.x += 0.003;
+      }
+
+      // Floating wave animation
+      const elapsed = performance.now() * 0.001;
+      mesh.position.y = Math.sin(elapsed * 2) * 0.08;
+
+      renderer.render(scene, camera);
+
+      // FPS tracking
+      frameCount++;
+      const now = performance.now();
+      if (now - lastTime >= 1000) {
+        setStats(prev => ({ ...prev, fps: Math.round((frameCount * 1000) / (now - lastTime)) }));
+        frameCount = 0;
+        lastTime = now;
+      }
+    };
+    animate();
+
+    // Resize observer
+    const resizeObserver = new ResizeObserver((entries) => {
+      if (!entries || entries.length === 0) return;
+      const { width: newWidth, height: newHeight } = entries[0].contentRect;
+      if (newWidth && newHeight) {
+        camera.aspect = newWidth / newHeight;
+        camera.updateProjectionMatrix();
+        renderer.setSize(newWidth, newHeight);
+      }
+    });
+    resizeObserver.observe(containerRef.current);
+
+    // Cleanup
+    return () => {
+      cancelAnimationFrame(animationFrameId);
+      resizeObserver.disconnect();
+      canvasElement.removeEventListener("mousedown", handleMouseDown);
+      canvasElement.removeEventListener("mousemove", handleMouseMove);
+      canvasElement.removeEventListener("mouseup", handleMouseUpOrLeave);
+      canvasElement.removeEventListener("mouseleave", handleMouseUpOrLeave);
+      canvasElement.removeEventListener("touchstart", handleTouchStart);
+      canvasElement.removeEventListener("touchmove", handleTouchMove);
+      canvasElement.removeEventListener("touchend", handleMouseUpOrLeave);
+      geometry.dispose();
+      material.dispose();
+      renderer.dispose();
+    };
+  }, []);
+
+  return (
+    <div className="relative border border-zinc-900 bg-zinc-950/80 rounded-2xl overflow-hidden p-6 aspect-video flex flex-col justify-between shadow-2xl transition-all hover:border-zinc-800">
+      <div className="absolute inset-0 bg-gradient-to-tr from-indigo-500/5 to-purple-600/5 pointer-events-none" />
+      
+      {/* Fake UI Header */}
+      <div className="flex items-center justify-between border-b border-zinc-900 pb-3 z-10">
+        <div className="flex items-center gap-2">
+          <div className="w-2.5 h-2.5 rounded-full bg-red-500/80" />
+          <div className="w-2.5 h-2.5 rounded-full bg-yellow-500/80" />
+          <div className="w-2.5 h-2.5 rounded-full bg-green-500/80" />
+        </div>
+        <span className="text-[10px] font-mono text-zinc-400 font-semibold flex items-center gap-1.5">
+          <span className="w-1.5 h-1.5 rounded-full bg-indigo-500 animate-ping" />
+          interactive_studio_mockup.glb
+        </span>
+        <span className="text-[9px] bg-emerald-500/15 text-emerald-400 font-bold px-2.5 py-0.5 rounded-full border border-emerald-500/10">WebGL Live</span>
+      </div>
+
+      {/* 3D Canvas Area */}
+      <div ref={containerRef} className="flex-1 relative cursor-grab active:cursor-grabbing my-2 flex items-center justify-center min-h-[140px]">
+        <canvas ref={canvasRef} className="absolute inset-0 w-full h-full block" />
+        
+        {/* Floating Controls Overlay */}
+        <div className="absolute top-2 right-2 flex flex-col gap-1 z-10 bg-zinc-950/60 p-1.5 rounded-lg border border-zinc-900 backdrop-blur-md">
+          <div className="text-[8px] font-bold text-zinc-500 px-1 uppercase tracking-wider mb-1">Preset Lighting</div>
+          {[
+            { id: "sunset", label: "Sunset Glow" },
+            { id: "neon", label: "Cyber Neon" },
+            { id: "studio", label: "Studio White" }
+          ].map(p => (
+            <button
+              key={p.id}
+              onClick={(e) => { e.stopPropagation(); setPreset(p.id); }}
+              className={`text-[8px] font-extrabold px-2 py-1 rounded text-left transition-colors uppercase tracking-wider ${
+                preset === p.id 
+                  ? "bg-indigo-600 text-white shadow-sm" 
+                  : "text-zinc-400 hover:text-white hover:bg-zinc-900"
+              }`}
+            >
+              {p.label}
+            </button>
+          ))}
+        </div>
+
+        {/* Dynamic Label based on active fabric */}
+        <div className="absolute bottom-2 left-2 bg-indigo-500/10 border border-indigo-500/20 text-indigo-400 font-mono text-[9px] px-2.5 py-1 rounded-lg backdrop-blur-md pointer-events-none">
+          Active Material: {selectedFabric.toUpperCase()}
+        </div>
+      </div>
+
+      {/* Fake UI Footer with Real Metrics */}
+      <div className="flex items-center justify-between border-t border-zinc-900 pt-3 text-zinc-500 text-[9px] font-mono z-10">
+        <span>Verts: {stats.verts}</span>
+        <span>Drag to rotate</span>
+        <span>FPS: {stats.fps}</span>
+      </div>
+    </div>
+  );
+}
 
 export default function HomeLandingPage() {
   const [session, setSession] = useState(null);
@@ -205,49 +498,7 @@ export default function HomeLandingPage() {
             </div>
 
             {/* Right Graphic Column: Configurator mockup */}
-            <div className="relative border border-zinc-900 bg-zinc-950/80 rounded-2xl overflow-hidden p-6 aspect-video flex flex-col justify-between shadow-2xl">
-              <div className="absolute inset-0 bg-gradient-to-tr from-indigo-500/10 to-purple-600/10 pointer-events-none" />
-              
-              {/* Fake UI Header */}
-              <div className="flex items-center justify-between border-b border-zinc-900 pb-3 z-10">
-                <div className="flex items-center gap-2">
-                  <div className="w-2.5 h-2.5 rounded-full bg-red-500" />
-                  <div className="w-2.5 h-2.5 rounded-full bg-yellow-500" />
-                  <div className="w-2.5 h-2.5 rounded-full bg-green-500" />
-                </div>
-                <span className="text-[10px] font-mono text-zinc-500">studio_viewport_active.glb</span>
-                <span className="text-[9px] bg-emerald-500/15 text-emerald-400 font-semibold px-2 py-0.5 rounded-full">WebGL Live</span>
-              </div>
-
-              {/* Fake UI Body (Visual 3D model placeholder) */}
-              <div className="flex-1 flex items-center justify-center relative py-6">
-                
-                {/* Visual model representation */}
-                <div className="w-28 h-28 bg-gradient-to-tr from-zinc-800 to-zinc-900 border border-zinc-700 rounded-2xl flex flex-col items-center justify-center shadow-lg relative animate-bounce duration-3000">
-                  <div className="absolute top-2 left-2 flex items-center gap-1">
-                    <Sparkles className="w-3 h-3 text-indigo-400" />
-                  </div>
-                  <span className="text-2xl font-black text-white/25">3D</span>
-                  <span className="text-[8px] text-indigo-400/60 font-mono mt-1">MESH DETECTED</span>
-                </div>
-
-                {/* Flying decals */}
-                <div className="absolute top-10 right-10 bg-indigo-500/10 border border-indigo-500/30 text-indigo-400 font-mono text-[9px] px-2 py-1 rounded-lg backdrop-blur-md animate-pulse">
-                  Decal: scale: 1.25
-                </div>
-                <div className="absolute bottom-10 left-10 bg-purple-500/10 border border-purple-500/30 text-purple-400 font-mono text-[9px] px-2 py-1 rounded-lg backdrop-blur-md animate-pulse">
-                  Lighting: sunset
-                </div>
-              </div>
-
-              {/* Fake UI Footer */}
-              <div className="flex items-center justify-between border-t border-zinc-900 pt-3 text-zinc-600 text-[9px] font-mono z-10">
-                <span>Verts: 24,192</span>
-                <span>OrbitControls Damping: 0.05</span>
-                <span>BumpScale: 0.04</span>
-              </div>
-
-            </div>
+            <InteractiveThreeMockup selectedFabric={selectedFabric} />
 
           </div>
         </div>
