@@ -18,8 +18,96 @@ import {
   Shirt,
   Layers,
   ArrowRight,
-  Heart
+  Heart,
+  Palette
 } from "lucide-react";
+
+const applyTheme = (themeName) => {
+  if (typeof window === "undefined") return;
+  
+  // Remove existing style block if it exists
+  const existingStyle = document.getElementById("theme-overrides-style");
+  if (existingStyle) {
+    existingStyle.remove();
+  }
+
+  if (themeName === "classic") {
+    return; // Midnight Classic needs no overrides
+  }
+
+  const styles = {
+    cyberpunk: `
+      :root {
+        --color-zinc-950: #040306 !important;
+        --color-zinc-900: #0a0914 !important;
+        --color-zinc-800: #141228 !important;
+        --color-indigo-600: #00f0ff !important; /* Electric Cyan */
+        --color-indigo-505: #00e0ef !important;
+        --color-indigo-500: #00e0ef !important;
+        --color-indigo-400: #33f3ff !important;
+        --color-purple-600: #ff007f !important; /* Hot Pink */
+        --color-purple-505: #ef0070 !important;
+        --color-purple-500: #ef0070 !important;
+        --color-purple-400: #ff3399 !important;
+      }
+    `,
+    emerald: `
+      :root {
+        --color-zinc-955: #040806 !important;
+        --color-zinc-950: #040806 !important; /* Rich Spruce */
+        --color-zinc-900: #08110c !important;
+        --color-zinc-800: #0f1e15 !important;
+        --color-indigo-600: #10b981 !important; /* Emerald Mint */
+        --color-indigo-505: #059669 !important;
+        --color-indigo-500: #059669 !important;
+        --color-indigo-400: #34d399 !important;
+        --color-purple-600: #fbbf24 !important; /* Warm Amber */
+        --color-purple-505: #f59e0b !important;
+        --color-purple-500: #f59e0b !important;
+        --color-purple-400: #fcd34d !important;
+      }
+    `,
+    sunset: `
+      :root {
+        --color-zinc-955: #090607 !important;
+        --color-zinc-950: #090607 !important; /* Charcoal Crimson */
+        --color-zinc-900: #120b0d !important;
+        --color-zinc-800: #1e1216 !important;
+        --color-indigo-600: #f43f5e !important; /* Rose Coral */
+        --color-indigo-505: #e11d48 !important;
+        --color-indigo-500: #e11d48 !important;
+        --color-indigo-400: #fb7185 !important;
+        --color-purple-600: #f97316 !important; /* Amber Sunset */
+        --color-purple-505: #ea580c !important;
+        --color-purple-500: #ea580c !important;
+        --color-purple-400: #fb923c !important;
+      }
+    `,
+    silver: `
+      :root {
+        --color-zinc-955: #050505 !important;
+        --color-zinc-950: #050505 !important;
+        --color-zinc-900: #111111 !important;
+        --color-zinc-800: #1e1e1e !important;
+        --color-indigo-600: #fafafa !important; /* Pure White/Silver */
+        --color-indigo-505: #f4f4f5 !important;
+        --color-indigo-500: #f4f4f5 !important;
+        --color-indigo-400: #ffffff !important;
+        --color-purple-600: #8a8a93 !important; /* Steel Silver */
+        --color-purple-505: #71717a !important;
+        --color-purple-500: #71717a !important;
+        --color-purple-400: #a1a1aa !important;
+      }
+    `
+  };
+
+  if (styles[themeName]) {
+    const styleEl = document.createElement("style");
+    styleEl.id = "theme-overrides-style";
+    styleEl.innerHTML = styles[themeName];
+    document.head.appendChild(styleEl);
+  }
+};
 
 export default function Navbar({ children }) {
   const pathname = usePathname();
@@ -29,6 +117,9 @@ export default function Navbar({ children }) {
   const [loading, setLoading] = useState(true);
   const [cartCount, setCartCount] = useState(0);
   const [wishlistCount, setWishlistCount] = useState(0);
+
+  const [activeTheme, setActiveTheme] = useState("classic");
+  const [isThemeDropdownOpen, setIsThemeDropdownOpen] = useState(false);
 
   const [isMobileMenuOpen, setIsMobileMenuOpen] = useState(false);
   const [isProfileDropdownOpen, setIsProfileDropdownOpen] = useState(false);
@@ -77,9 +168,11 @@ export default function Navbar({ children }) {
     updateBadges();
     window.addEventListener("storage", updateBadges);
     window.addEventListener("cart-updated", updateBadges);
+    window.addEventListener("wishlist-updated", updateBadges);
     return () => {
       window.removeEventListener("storage", updateBadges);
       window.removeEventListener("cart-updated", updateBadges);
+      window.removeEventListener("wishlist-updated", updateBadges);
     };
   }, [updateBadges]);
 
@@ -106,6 +199,20 @@ export default function Navbar({ children }) {
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
   }, []);
+
+  // Sync and persist active custom theme
+  useEffect(() => {
+    const savedTheme = localStorage.getItem("apparel_theme") || "classic";
+    setActiveTheme(savedTheme);
+    applyTheme(savedTheme);
+  }, []);
+
+  const handleThemeChange = (themeName) => {
+    setActiveTheme(themeName);
+    localStorage.setItem("apparel_theme", themeName);
+    applyTheme(themeName);
+    setIsThemeDropdownOpen(false);
+  };
 
   const openSearch = () => {
     setIsSearchOverlayOpen(true);
@@ -272,6 +379,45 @@ export default function Navbar({ children }) {
                   )}
                 </Link>
               )}
+
+              {/* Theme Selector Palette */}
+              <div className="relative">
+                <button
+                  onClick={() => setIsThemeDropdownOpen(!isThemeDropdownOpen)}
+                  className="p-2 rounded-lg text-zinc-400 hover:text-indigo-400 hover:bg-zinc-900 border border-zinc-900 hover:border-zinc-800 transition-all cursor-pointer flex items-center justify-center"
+                  title="Customize Theme"
+                >
+                  <Palette className="w-4 h-4" />
+                </button>
+
+                {isThemeDropdownOpen && (
+                  <div className="absolute right-0 mt-2.5 w-44 bg-zinc-950 border border-zinc-900 rounded-2xl shadow-2xl overflow-hidden z-50 p-2 space-y-1">
+                    <div className="text-[8px] font-bold text-zinc-500 px-2 py-1 uppercase tracking-wider select-none border-b border-zinc-900 mb-1">
+                      Select Accent Theme
+                    </div>
+                    {[
+                      { id: "classic", label: "Midnight Glow", color: "bg-indigo-500" },
+                      { id: "cyberpunk", label: "Cyber Neon", color: "bg-cyan-400" },
+                      { id: "emerald", label: "Emerald Mint", color: "bg-emerald-400" },
+                      { id: "sunset", label: "Sunset Coral", color: "bg-rose-455" },
+                      { id: "silver", label: "Monochrome Silver", color: "bg-zinc-300" }
+                    ].map(t => (
+                      <button
+                        key={t.id}
+                        onClick={() => handleThemeChange(t.id)}
+                        className={`w-full flex items-center gap-2.5 px-2.5 py-1.5 rounded-lg text-left text-[10px] font-bold transition-all uppercase tracking-wider cursor-pointer ${
+                          activeTheme === t.id 
+                            ? "bg-zinc-900 text-white" 
+                            : "text-zinc-400 hover:text-white hover:bg-zinc-900/50"
+                        }`}
+                      >
+                        <span className={`w-2 h-2 rounded-full ${t.color === "bg-rose-455" ? "bg-rose-400" : t.color} shrink-0`} />
+                        <span>{t.label}</span>
+                      </button>
+                    ))}
+                  </div>
+                )}
+              </div>
 
               {/* Profile / Sign In */}
               {loading ? (

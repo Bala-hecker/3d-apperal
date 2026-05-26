@@ -160,6 +160,7 @@ export default function StudioPage() {
   const ambientLightRef = useRef(null);
   const dirLight1Ref = useRef(null);
   const dirLight2Ref = useRef(null);
+  const isCopyingRef = useRef(false);
 
   // Admin Pre-design Publishing state
   const [showPublishModal, setShowPublishModal] = useState(false);
@@ -513,10 +514,12 @@ export default function StudioPage() {
 
         fabric.Image.fromURL(preloadedDecal, (img) => {
           img.set({
-            left: 170, // centered on 512x512 canvas (approx 512/2 - (512*0.35)/2)
-            top: 170,
-            scaleX: 0.35,
-            scaleY: 0.35,
+            left: 128,
+            top: 185,
+            originX: "center",
+            originY: "center",
+            scaleX: 0.25,
+            scaleY: 0.25,
             cornerColor: "#4f46e5",
             cornerSize: 8,
             transparentCorners: false,
@@ -579,6 +582,8 @@ export default function StudioPage() {
         console.log("updateHiddenCanvas: No fabricCanvasRef.current");
         return;
       }
+      if (isCopyingRef.current) return; // Prevent infinite recursion during selection toggle renders
+
       if (!hiddenCanvasRef.current) {
         console.log("updateHiddenCanvas: No hiddenCanvasRef.current");
         return;
@@ -605,32 +610,74 @@ export default function StudioPage() {
         return;
       }
       
+      // Temporarily clear active selection highlight to get a clean canvas elements draw
+      const activeObject = canvas.getActiveObject();
+      if (activeObject) {
+        isCopyingRef.current = true;
+        canvas.discardActiveObject();
+        canvas.renderAll();
+      }
+
       ctx.clearRect(0, 0, w, h);
       
       const halfW = w / 2;
       
-      console.log("updateHiddenCanvas: Drawing texture...", {
+      console.log("updateHiddenCanvas: Drawing split texture...", {
         fabricWidth: fabricCanvasEl.width,
         fabricHeight: fabricCanvasEl.height,
-        destHalfW: halfW,
-        destH: h
+        halfW,
+        h
       });
 
-      // Draw Left Half (Front) Flipped Horizontally & Vertically (Destination is Left Half)
-      ctx.save();
-      ctx.translate(halfW / 2, h / 2);
-      ctx.scale(1, -1);
-      ctx.drawImage(fabricCanvasEl, 0, 0, fabricCanvasEl.width / 2, fabricCanvasEl.height, -halfW / 2, -h / 2, halfW, h);
-      ctx.restore();
+      // Draw Left Half (Front) 1:1 exactly as-is to preserve horizontal alignment
+      ctx.drawImage(fabricCanvasEl, 0, 0, fabricCanvasEl.width / 2, fabricCanvasEl.height, 0, 0, halfW, h);
       
-      // Draw Right Half (Back) Flipped Horizontally & Vertically (Destination is Right Half)
-      ctx.save();
-      ctx.translate(halfW + halfW / 2, h / 2);
-      ctx.scale(1, -1);
-      ctx.drawImage(fabricCanvasEl, fabricCanvasEl.width / 2, 0, fabricCanvasEl.width / 2, fabricCanvasEl.height, -halfW / 2, -h / 2, halfW, h);
-      ctx.restore();
+      // Draw Right Half (Back) 1:1 exactly as-is to preserve horizontal alignment
+      ctx.drawImage(fabricCanvasEl, fabricCanvasEl.width / 2, 0, fabricCanvasEl.width / 2, fabricCanvasEl.height, halfW, 0, halfW, h);
+
+      // Perform high-fidelity pixel replacement to replace the grey background layout area with the active garment color
+      try {
+        const imgData = ctx.getImageData(0, 0, w, h);
+        const data = imgData.data;
+        
+        // Parse target garment color to RGB
+        const hex = (garmentColor || "#ffffff").replace("#", "");
+        const rTarget = parseInt(hex.substring(0, 2), 16);
+        const gTarget = parseInt(hex.substring(2, 4), 16);
+        const bTarget = parseInt(hex.substring(4, 6), 16);
+
+        for (let i = 0; i < data.length; i += 4) {
+          const r = data[i];
+          const g = data[i+1];
+          const b = data[i+2];
+          
+          const diffRG = Math.abs(r - g);
+          const diffGB = Math.abs(g - b);
+          const diffRB = Math.abs(r - b);
+          
+          // Neutral grey background detection (low saturation, and in the grey layout range)
+          if (diffRG < 18 && diffGB < 18 && diffRB < 18) {
+            if (r >= 85 && r <= 225) {
+              data[i] = rTarget;
+              data[i+1] = gTarget;
+              data[i+2] = bTarget;
+            }
+          }
+        }
+        ctx.putImageData(imgData, 0, 0);
+      } catch (pixelErr) {
+        console.warn("Pixel replacement failed:", pixelErr);
+      }
+
+      // Restore active selection back on screen for the user interface
+      if (activeObject) {
+        canvas.setActiveObject(activeObject);
+        canvas.renderAll();
+        isCopyingRef.current = false;
+      }
     } catch (e) {
       console.error("Error in updateHiddenCanvas:", e);
+      isCopyingRef.current = false;
     }
   };
 
@@ -707,7 +754,7 @@ export default function StudioPage() {
 
       canvasTexture = new THREE.CanvasTexture(hiddenCanvas);
       canvasTexture.colorSpace = THREE.SRGBColorSpace;
-      canvasTexture.flipY = false; // Match the standard UV space
+      canvasTexture.flipY = true; // Auto-flip vertically to align right-side up in WebGL UV space
       textureRef.current = canvasTexture;
       setIsThreeReady(true);
     }
@@ -931,8 +978,10 @@ export default function StudioPage() {
     import("fabric").then((fabricModule) => {
       const fabric = fabricModule.fabric;
       const text = new fabric.IText("Double-click to edit", {
-        left: 150,
-        top: 200,
+        left: 128,
+        top: 185,
+        originX: "center",
+        originY: "center",
         fontFamily: "Outfit, Inter, sans-serif",
         fill: textColor,
         fontSize: 28,
@@ -957,8 +1006,10 @@ export default function StudioPage() {
 
       if (type === "square") {
         shape = new fabric.Rect({
-          left: 200,
-          top: 200,
+          left: 128,
+          top: 185,
+          originX: "center",
+          originY: "center",
           fill: fillColor,
           width: 80,
           height: 80,
@@ -968,8 +1019,10 @@ export default function StudioPage() {
         });
       } else if (type === "circle") {
         shape = new fabric.Circle({
-          left: 200,
-          top: 200,
+          left: 128,
+          top: 185,
+          originX: "center",
+          originY: "center",
           fill: fillColor,
           radius: 40,
           cornerColor: "#4f46e5",
@@ -1142,8 +1195,10 @@ export default function StudioPage() {
         const fabric = fabricModule.fabric;
         fabric.Image.fromURL(data, (img) => {
           img.set({
-            left: 150,
-            top: 150,
+            left: 128,
+            top: 185,
+            originX: "center",
+            originY: "center",
             scaleX: 0.25,
             scaleY: 0.25,
             cornerColor: "#4f46e5",
@@ -1211,8 +1266,8 @@ export default function StudioPage() {
     `;
     loaderOverlay.innerHTML = `
       <div style="width:50px; height:50px; border:4px solid #3f3f46; border-top-color:#6366f1; border-radius:50%; animation:spin 1s linear infinite; margin-bottom:20px;"></div>
-      <p style="font-weight:bold; font-size:14px; margin-top:16px;">Compiling 3D Model & 2D Decal maps...</p>
-      <p style="font-size:11px; color:#71717a; margin-top:6px;">Please wait while we construct your high-definition manufacturing files.</p>
+      <p style="font-weight:bold; font-size:14px; margin-top:16px;">Saving Custom Design...</p>
+      <p style="font-size:11px; color:#71717a; margin-top:6px;">Please wait while we package your custom garment details.</p>
       <style>@keyframes spin { to { transform: rotate(360deg); } }</style>
     `;
     document.body.appendChild(loaderOverlay);
@@ -1224,125 +1279,48 @@ export default function StudioPage() {
         quality: 0.95
       });
 
-      // 2. Export transparent Decal overlay map
-      const bgImg = canvas.backgroundImage;
-      const bgColor = canvas.backgroundColor;
-      
-      canvas.backgroundImage = null;
-      canvas.setBackgroundColor("transparent", canvas.renderAll.bind(canvas));
-      const transparentDecalUrl = canvas.toDataURL({
-        format: "png",
-        quality: 0.95
-      });
-      
-      // Restore canvas backgrounds
-      canvas.backgroundImage = bgImg;
-      canvas.setBackgroundColor(bgColor, canvas.renderAll.bind(canvas));
-      canvas.renderAll();
-
-      // 3. Export customized 3D GLB model using Three.js GLTFExporter
-      let customGlbBase64 = "";
-      if (modelRef.current) {
-        try {
-          const { GLTFExporter } = await import("three/examples/jsm/exporters/GLTFExporter.js");
-          const exporter = new GLTFExporter();
-          
-          const glbBuffer = await new Promise((resolve, reject) => {
-            exporter.parse(
-              modelRef.current,
-              (result) => resolve(result),
-              (err) => reject(err),
-              { binary: true, animations: [] }
-            );
-          });
-
-          // Convert ArrayBuffer to Base64
-          let binary = '';
-          const bytes = new Uint8Array(glbBuffer);
-          const len = bytes.byteLength;
-          for (let i = 0; i < len; i++) {
-            binary += String.fromCharCode(bytes[i]);
-          }
-          customGlbBase64 = window.btoa(binary);
-        } catch (exportErr) {
-          console.error("Three.js GLB export pipeline failed:", exportErr);
-        }
-      }
-
-      // Generate a lightweight low-res thumbnail image for rendering inside the cart drawer
-      const lowResThumbnail = canvas.toDataURL({
-        format: "png",
-        quality: 0.3,
-        multiplier: 0.15 // extremely lightweight (approx 10-15KB)
-      });
-
-      const itemId = `cart_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
-      const designCacheKey = `design_${itemId}`;
-
-      // 4. Save high-resolution binary, vector SVG, and image data securely in high-capacity IndexedDB cache
-      await saveDesignData(designCacheKey, {
-        customDesignUrl: designDataUrl,
-        customDecalUrl: transparentDecalUrl,
-        customGlbBase64: customGlbBase64,
-        customSvg: canvas.toSVG()
-      });
-
-      // Prepare custom cart item (strictly lightweight under 20KB!)
+      // Calculate final pricing based on active product base price + selected premium fabric upcharge
       const fabricProps = fabricProperties[selectedFabric] || fabricProperties.cotton;
       const upcharge = fabricProps.upcharge;
+      const finalPrice = (activeProduct.price || 3999) + upcharge;
 
-      const cartItem = {
-        id: itemId,
-        productId: activeProduct.id,
-        name: `${activeProduct.name} (${fabricProps.label})`,
-        baseTexture: activeProduct.texture_url,
-        glbUrl: activeProduct.glb_file_url,
-        thumbnailUrl: lowResThumbnail, // Lightweight PNG thumbnail to render in cart drawer
-        designCacheKey: designCacheKey, // Key to retrieve full assets from IndexedDB on checkout
-        size: "M", // default size
-        quantity: 1,
-        addedAt: new Date().toISOString(),
-        price: (activeProduct.price || 3999) + upcharge,
-        fabric: selectedFabric
+      const customProductId = `custom_${Date.now()}`;
+
+      // 2. Build the custom catalog product object
+      const customProduct = {
+        id: customProductId,
+        name: `Custom ${activeProduct.name}`,
+        glb_file_url: activeProduct.glb_file_url,
+        texture_url: designDataUrl,
+        price: finalPrice,
+        category: activeProduct.category || "custom",
+        description: `A bespoke customized ${activeProduct.name} crafted inside our interactive 3D design configurator using premium ${fabricProps.label}.`,
+        is_template: false,
+        gallery_urls: designDataUrl
       };
 
-      // 5. Sync to local storage immediately (Completely safe from QuotaExceededError!)
-      const localCart = JSON.parse(localStorage.getItem("apparel_cart") || "[]");
-      localCart.push(cartItem);
-      localStorage.setItem("apparel_cart", JSON.stringify(localCart));
+      // 3. Retrieve and update the local products catalog in localStorage
+      const storedLocal = localStorage.getItem("apparel_products_local");
+      const localProducts = storedLocal ? JSON.parse(storedLocal) : [];
       
-      // Dispatch cart updated event to sync badge count
-      window.dispatchEvent(new Event("cart-updated"));
+      const updatedLocalProducts = [customProduct, ...localProducts.filter(p => p.id !== customProductId)];
+      localStorage.setItem("apparel_products_local", JSON.stringify(updatedLocalProducts));
 
-      // 6. Try to sync to Supabase database (thumbnail/lightweight URL only)
-      const { data: { session: currentSession } } = await supabase.auth.getSession();
-      if (currentSession) {
-        try {
-          await supabase.from("cart_items").insert([
-            {
-              user_id: currentSession.user.id,
-              product_id: activeProduct.id,
-              custom_design_url: lowResThumbnail, // database reference is also lightweight
-              size: "M",
-              quantity: 1
-            }
-          ]);
-        } catch (dbErr) {
-          console.warn("Database sync skipped:", dbErr.message);
-        }
-      }
+      // 4. Log custom design audit entry
+      await addAuditLog(`Saved customer designed catalog product "${customProduct.name}" (ID: ${customProductId}) with base price: ₹${finalPrice.toLocaleString('en-IN')}.`);
 
       if (document.body.contains(loaderOverlay)) {
         document.body.removeChild(loaderOverlay);
       }
-      alert(`🎉 Custom design saved successfully! Redirecting to studio dashboard...`);
-      router.push("/dashboard");
+
+      alert(`🎉 Custom design saved successfully! Opening your product detail page...`);
+      router.push(`/product/${customProductId}`);
     } catch (err) {
-      console.error("Cart save failed:", err);
+      console.error("Design save failed:", err);
       if (document.body.contains(loaderOverlay)) {
         document.body.removeChild(loaderOverlay);
       }
-      alert("Could not add to cart. Please try again.");
+      alert("Could not save design. Please try again.");
     }
   };
 

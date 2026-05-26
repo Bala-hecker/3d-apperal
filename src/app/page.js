@@ -315,6 +315,7 @@ export default function HomeLandingPage() {
   const [selectedFabric, setSelectedFabric] = useState("cotton");
   const [featuredProducts, setFeaturedProducts] = useState([]);
   const [loadingFeatured, setLoadingFeatured] = useState(true);
+  const [designsCount, setDesignsCount] = useState(0);
 
   useEffect(() => {
     supabase.auth.getSession().then(({ data: { session: currentSession } }) => {
@@ -342,6 +343,29 @@ export default function HomeLandingPage() {
       finally { setLoadingFeatured(false); }
     };
     fetchFeatured();
+
+    // Fetch legitimate total designs count
+    const fetchDesignsCount = async () => {
+      try {
+        const { count } = await supabase
+          .from("products")
+          .select("id", { count: "exact", head: true });
+        
+        let localCount = 0;
+        try {
+          const stored = localStorage.getItem("apparel_products_local");
+          localCount = stored ? JSON.parse(stored).length : 0;
+        } catch {}
+        
+        setDesignsCount((count || 0) + localCount);
+      } catch (err) {
+        try {
+          const stored = localStorage.getItem("apparel_products_local");
+          setDesignsCount(stored ? JSON.parse(stored).length : 0);
+        } catch {}
+      }
+    };
+    fetchDesignsCount();
 
     return () => subscription.unsubscribe();
   }, []);
@@ -450,8 +474,8 @@ export default function HomeLandingPage() {
           {/* Stats Bar */}
           <div className="mt-12 flex flex-col sm:flex-row items-center justify-center gap-6 sm:gap-10">
             {[
-              { value: "2,400+", label: "Designs Created" },
-              { value: "48h", label: "Avg. Delivery" },
+              { value: designsCount > 0 ? `${designsCount}` : "Loading...", label: "Designs Created" },
+              { value: "7-10 Days", label: "Tailoring & Delivery" },
               { value: "100%", label: "Satisfaction" },
               { value: "380 GSM", label: "Fabric Quality" },
             ].map((stat, i) => (
@@ -565,7 +589,7 @@ export default function HomeLandingPage() {
             <div>
               <div className="text-[10px] font-bold text-indigo-400 uppercase tracking-widest mb-2">New Arrivals</div>
               <h2 className="text-3xl font-extrabold tracking-tight text-white">Shop Ready-to-Wear</h2>
-              <p className="text-xs text-zinc-400 mt-1.5">Pre-designed by our studio team. Ship in 48h.</p>
+              <p className="text-xs text-zinc-400 mt-1.5">Pre-designed by our studio team. Ready for prompt courier delivery.</p>
             </div>
             <Link href="/dashboard" className="text-xs text-indigo-400 hover:text-indigo-300 font-bold uppercase tracking-wider flex items-center gap-1 group">
               View All
@@ -623,7 +647,7 @@ export default function HomeLandingPage() {
             {[
               { emoji: "🚀", title: "Free Express Shipping", sub: "On all orders over ₹1,999" },
               { emoji: "🔒", title: "Secure Payments", sub: "UPI, Stripe, Net Banking" },
-              { emoji: "↩️", title: "Easy 7-Day Returns", sub: "No questions asked" },
+              { emoji: "🛠️", title: "Custom Tailored", sub: "Bespoke items, no returns" },
               { emoji: "🏆", title: "Premium Quality", sub: "380 GSM certified fabrics" },
             ].map((badge, i) => (
               <div key={i} className="flex flex-col items-center gap-2.5 group">
@@ -691,7 +715,7 @@ export default function HomeLandingPage() {
           <div className="grid grid-cols-1 sm:grid-cols-3 gap-10 mb-12">
             <div>
               <div className="text-lg font-extrabold text-white mb-2">Thread<span className="text-indigo-400">3D</span></div>
-              <p className="text-[11px] text-zinc-500 leading-relaxed">Luxury custom streetwear, designed in 3D and built by automated fabrication technology. Your design, in fabric, in 48 hours.</p>
+              <p className="text-[11px] text-zinc-500 leading-relaxed">Luxury custom streetwear, designed in 3D and tailored on-demand. Your custom design, tailored in premium fabric and shipped directly to you.</p>
             </div>
             <div>
               <h4 className="text-[10px] font-bold text-zinc-400 uppercase tracking-widest mb-4">Quick Links</h4>

@@ -21,7 +21,8 @@ import {
   X,
   CreditCard,
   Lock,
-  ShieldCheck
+  ShieldCheck,
+  Heart
 } from "lucide-react";
 import Link from "next/link";
 import Navbar from "@/components/Navbar";
@@ -54,6 +55,9 @@ export default function DashboardPage() {
   const [loadingPastOrders, setLoadingPastOrders] = useState(false);
   const [selectedTrackingOrder, setSelectedTrackingOrder] = useState(null);
   const [activeShipmentCheckpointStep, setActiveShipmentCheckpointStep] = useState(0);
+
+  // Wishlist state
+  const [wishlist, setWishlist] = useState([]);
 
   // Cart state
   const [cart, setCart] = useState([]);
@@ -128,39 +132,7 @@ export default function DashboardPage() {
     }
   }, [showStripeCheckout, paymentMethod]);
   
-  // Real Address Finder Suggestions State
-  const [addressSuggestions, setAddressSuggestions] = useState([]);
-
-  // Address Lookup Suggestions Database (simulates Google Places)
-  const ADDRESS_DATABASE = [
-    { address: "1600 Amphitheatre Pkwy", city: "Mountain View, CA", zip: "94043" },
-    { address: "1 Infinite Loop", city: "Cupertino, CA", zip: "95014" },
-    { address: "350 5th Ave (Empire State)", city: "New York, NY", zip: "10118" },
-    { address: "10 Downing Street", city: "London", zip: "SW1A 2AA" },
-    { address: "Avenue des Champs-Élysées", city: "Paris", zip: "75008" },
-    { address: "10 Bayfront Ave (Marina Bay Sands)", city: "Singapore", zip: "018956" },
-    { address: "Taj Mahal Complex, Dharmapuri", city: "Agra, UP", zip: "282001" },
-  ];
-
-  const handleAddressChange = (val) => {
-    setCustomerAddress(val);
-    if (!val.trim()) {
-      setAddressSuggestions([]);
-      return;
-    }
-    const filtered = ADDRESS_DATABASE.filter(item => 
-      item.address.toLowerCase().includes(val.toLowerCase()) || 
-      item.city.toLowerCase().includes(val.toLowerCase())
-    );
-    setAddressSuggestions(filtered);
-  };
-
-  const selectAddressSuggestion = (suggestion) => {
-    setCustomerAddress(suggestion.address);
-    setCustomerCity(suggestion.city);
-    setCustomerZip(suggestion.zip);
-    setAddressSuggestions([]);
-  };
+  // Shipping Address input handler
 
   // Fetch customer's past orders
   const fetchPastOrders = async () => {
@@ -231,6 +203,17 @@ export default function DashboardPage() {
       }
     } catch (err) {
       console.error("Local fallback notifications loading failed:", err);
+    }
+  };
+
+  const loadWishlist = () => {
+    try {
+      const stored = localStorage.getItem("apparel_wishlist");
+      if (stored) {
+        setWishlist(JSON.parse(stored));
+      }
+    } catch (err) {
+      console.error("Error loading wishlist:", err);
     }
   };
 
@@ -415,10 +398,9 @@ export default function DashboardPage() {
               <div>
                 <h3 class="section-title">Fulfilled By</h3>
                 <div class="address-text">
-                  <strong>Thread 3D Manufacturing Inc.</strong><br/>
-                  742 Decal Coordinates Boulevard<br/>
-                  Studio Suite 3D<br/>
-                  San Francisco, CA 94107
+                  <strong>Thread 3D Studio</strong><br/>
+                  Custom Fabrication Facility<br/>
+                  Digital Customization Hub
                 </div>
               </div>
             </div>
@@ -540,6 +522,7 @@ export default function DashboardPage() {
         setCheckingAuth(false);
         fetchProducts();
         loadCart();
+        loadWishlist();
         fetchPastOrders();
         loadPersistentNotifications();
       }
@@ -632,7 +615,7 @@ export default function DashboardPage() {
     
     // Auto-respond simulating active support desk operators
     setTimeout(() => {
-      let replyText = "Our design operators are reviewing your design. Custom apparel production takes 2-3 business days.";
+      let replyText = "Our design operators are reviewing your design. Custom apparel production and tailoring takes 5-7 business days.";
       const query = chatInput.toLowerCase();
       if (query.includes("ship") || query.includes("track") || query.includes("order")) {
         replyText = "You can track physical shipments live using the 'Track Orders' tab in your dashboard! Once shipped, you can launch our real-time GPS packaging journey simulation maps!";
@@ -706,6 +689,25 @@ export default function DashboardPage() {
   // Clear entire cart
   const clearCart = () => {
     saveCartState([]);
+  };
+
+  const handleRemoveFromWishlist = (productId) => {
+    const updated = wishlist.filter(id => id !== productId);
+    setWishlist(updated);
+    localStorage.setItem("apparel_wishlist", JSON.stringify(updated));
+    
+    // Dispatch custom event to sync shared Navbar badge
+    window.dispatchEvent(new Event("wishlist-updated"));
+    
+    setActiveToast({
+      title: "💔 Removed from Wishlist",
+      message: "Item has been removed from your saved list."
+    });
+  };
+
+  const handleAddWishlistToCart = (product) => {
+    handleAddCatalogToCart(product);
+    handleRemoveFromWishlist(product.id);
   };
 
   // Launch Payment Gateway
@@ -1042,29 +1044,52 @@ export default function DashboardPage() {
         </section>
 
         {/* Primary View Switcher: Shop vs Tracking */}
-        <section className="mb-12 max-w-xl mx-auto bg-zinc-900/60 border border-zinc-900 rounded-xl p-1 flex shadow-inner gap-1">
+        <section className="mb-12 max-w-2xl mx-auto bg-zinc-900/60 border border-zinc-900 rounded-xl p-1 flex shadow-inner gap-1 flex-wrap sm:flex-nowrap">
           <button
             onClick={() => setActiveDashboardTab("shop")}
-            className={`flex-1 text-center py-2.5 rounded-lg text-xs font-bold transition-all uppercase tracking-wider cursor-pointer flex items-center justify-center gap-1.5 ${
+            className={`flex-1 text-center py-2.5 rounded-lg text-[10px] sm:text-xs font-bold transition-all uppercase tracking-wider cursor-pointer flex items-center justify-center gap-1.5 ${
               activeDashboardTab === "shop"
                 ? "bg-indigo-600 border-indigo-500 text-white shadow-lg shadow-indigo-600/10 font-extrabold"
-                : "text-zinc-500 hover:text-zinc-350"
+                : "text-zinc-500 hover:text-zinc-355"
             }`}
           >
             <ShoppingBag className="w-3.5 h-3.5" />
-            <span>Shop Catalog</span>
+            <span className="hidden md:inline">Shop Catalog</span>
+            <span className="md:hidden">Shop</span>
           </button>
           
           <button
             onClick={() => setActiveDashboardTab("3d-design")}
-            className={`flex-1 text-center py-2.5 rounded-lg text-xs font-bold transition-all uppercase tracking-wider cursor-pointer flex items-center justify-center gap-1.5 ${
+            className={`flex-1 text-center py-2.5 rounded-lg text-[10px] sm:text-xs font-bold transition-all uppercase tracking-wider cursor-pointer flex items-center justify-center gap-1.5 ${
               activeDashboardTab === "3d-design"
                 ? "bg-indigo-600 border-indigo-500 text-white shadow-lg shadow-indigo-600/10 font-extrabold"
-                : "text-zinc-500 hover:text-zinc-350"
+                : "text-zinc-500 hover:text-zinc-355"
             }`}
           >
             <Sparkles className="w-3.5 h-3.5 animate-pulse text-indigo-400" />
-            <span>3D Design Studio</span>
+            <span className="hidden md:inline">3D Studio</span>
+            <span className="md:hidden">Studio</span>
+          </button>
+
+          <button
+            onClick={() => {
+              setActiveDashboardTab("wishlist");
+              loadWishlist();
+            }}
+            className={`flex-1 text-center py-2.5 rounded-lg text-[10px] sm:text-xs font-bold transition-all uppercase tracking-wider cursor-pointer flex items-center justify-center gap-1.5 ${
+              activeDashboardTab === "wishlist"
+                ? "bg-indigo-600 border-indigo-500 text-white shadow-lg shadow-indigo-600/10 font-extrabold"
+                : "text-zinc-500 hover:text-zinc-355"
+            }`}
+          >
+            <Heart className="w-3.5 h-3.5" />
+            <span className="hidden md:inline">Saved Wishlist</span>
+            <span className="md:hidden">Wishlist</span>
+            {wishlist.length > 0 && (
+              <span className="bg-zinc-850 text-indigo-400 border border-indigo-500/20 text-[9px] font-bold px-1.5 py-0.5 rounded-full">
+                {wishlist.length}
+              </span>
+            )}
           </button>
 
           <button
@@ -1072,14 +1097,15 @@ export default function DashboardPage() {
               setActiveDashboardTab("tracking");
               fetchPastOrders();
             }}
-            className={`flex-1 text-center py-2.5 rounded-lg text-xs font-bold transition-all uppercase tracking-wider cursor-pointer flex items-center justify-center gap-1.5 ${
+            className={`flex-1 text-center py-2.5 rounded-lg text-[10px] sm:text-xs font-bold transition-all uppercase tracking-wider cursor-pointer flex items-center justify-center gap-1.5 ${
               activeDashboardTab === "tracking"
                 ? "bg-indigo-600 border-indigo-500 text-white shadow-lg shadow-indigo-600/10 font-extrabold"
-                : "text-zinc-500 hover:text-zinc-350"
+                : "text-zinc-500 hover:text-zinc-355"
             }`}
           >
             <Sparkles className="w-3.5 h-3.5" />
-            <span>Track Orders</span>
+            <span className="hidden md:inline">Track Orders</span>
+            <span className="md:hidden">Track</span>
             {pastOrders.length > 0 && (
               <span className="bg-zinc-850 text-indigo-400 border border-indigo-500/20 text-[9px] font-bold px-1.5 py-0.5 rounded-full">
                 {pastOrders.length}
@@ -1162,9 +1188,12 @@ export default function DashboardPage() {
                 <div className="grid grid-cols-2 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-5 animate-fade-in">
                   {filteredProducts.map((product) => {
                     const galleryImages = product.gallery_urls
-                      ? product.gallery_urls.split(",").map(u => u.trim()).filter(Boolean)
+                      ? (product.gallery_urls.startsWith("data:image")
+                          ? [product.gallery_urls]
+                          : product.gallery_urls.split(",").map(u => u.trim()).filter(Boolean))
                       : [];
-                    const hoverImage = galleryImages.length > 0 ? galleryImages[0] : null;
+                    const uniqueGalleryImages = galleryImages.filter(u => u !== product.texture_url);
+                    const hoverImage = uniqueGalleryImages.length > 0 ? uniqueGalleryImages[0] : null;
                     const isHovered = hoveredProductId === product.id;
                     return (
                       <div
@@ -1392,6 +1421,80 @@ export default function DashboardPage() {
               )}
             </section>
           </div>
+        ) : activeDashboardTab === "wishlist" ? (
+          /* SAVED WISHLIST VIEW */
+          <div className="space-y-8">
+            <div className="border-b border-zinc-900 pb-3 select-none">
+              <h3 className="text-xs font-bold text-zinc-400 uppercase tracking-widest flex items-center gap-2">
+                <Heart className="w-4 h-4 text-rose-450" />
+                <span>My Saved Wishlist ({products.filter(p => wishlist.includes(p.id)).length})</span>
+              </h3>
+              <p className="text-[10px] text-zinc-500 mt-1">Review your saved items, move them directly to your shopping bag, or view full detail metrics.</p>
+            </div>
+
+            {products.filter(p => wishlist.includes(p.id)).length === 0 ? (
+              <div className="py-24 text-center border border-dashed border-zinc-850 rounded-2xl bg-zinc-900/10 max-w-xl mx-auto">
+                <Heart className="w-12 h-12 mx-auto text-zinc-800 mb-4 animate-pulse" />
+                <p className="text-sm font-semibold text-zinc-500">Your saved wishlist is empty.</p>
+                <p className="text-xs text-zinc-650 mt-1.5 leading-relaxed">Save garments from the shop catalog to keep track of designs you want to buy or custom customize.</p>
+                <button
+                  onClick={() => setActiveDashboardTab("shop")}
+                  className="mt-6 text-xs font-bold bg-indigo-600 hover:bg-indigo-500 text-white px-5 py-2.5 rounded-xl transition-all shadow-md cursor-pointer"
+                >
+                  Browse Shop Catalog
+                </button>
+              </div>
+            ) : (
+              <div className="grid grid-cols-2 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-5 animate-fade-in">
+                {products.filter(p => wishlist.includes(p.id)).map((product) => (
+                  <div 
+                    key={product.id}
+                    className="bg-zinc-900/25 border border-zinc-900/80 hover:border-zinc-700 rounded-2xl overflow-hidden transition-all flex flex-col group shadow-sm hover:shadow-xl hover:shadow-zinc-950/60"
+                  >
+                    <div className="relative w-full bg-zinc-950 overflow-hidden cursor-pointer" style={{ aspectRatio: '3/4' }} onClick={() => router.push(`/product/${product.id}`)}>
+                      <img 
+                        src={product.texture_url} 
+                        alt={product.name} 
+                        className="absolute inset-0 w-full h-full object-cover opacity-90 group-hover:opacity-100 group-hover:scale-105 transition-all duration-500" 
+                        onError={(e) => { e.target.style.display = 'none'; }}
+                      />
+                      <button
+                        onClick={(e) => { e.stopPropagation(); handleRemoveFromWishlist(product.id); }}
+                        className="absolute top-2.5 right-2.5 p-2 bg-zinc-950/80 hover:bg-red-500/10 border border-zinc-900 hover:border-red-500/20 text-rose-400 rounded-xl transition-colors cursor-pointer"
+                        title="Remove from saved list"
+                      >
+                        <Trash2 className="w-3.5 h-3.5" />
+                      </button>
+                    </div>
+                    
+                    <div className="p-3 flex flex-col gap-2 flex-grow">
+                      <h3 className="font-bold text-xs text-zinc-200 line-clamp-1 leading-snug pr-6 transition-colors group-hover:text-white" onClick={() => router.push(`/product/${product.id}`)}>{product.name}</h3>
+                      <div className="flex items-center justify-between pt-1">
+                        <span className="text-xs font-black text-indigo-400">₹{product.price ? product.price.toLocaleString('en-IN') : "3,999"}</span>
+                        <span className="text-[9px] text-zinc-500">{product.category || "Apparel"}</span>
+                      </div>
+                      
+                      <div className="grid grid-cols-2 gap-2 mt-4 pt-2 border-t border-zinc-900/40">
+                        <button
+                          onClick={() => handleAddWishlistToCart(product)}
+                          className="py-2 bg-indigo-600 hover:bg-indigo-500 text-white rounded-xl text-[10px] font-bold text-center transition-all cursor-pointer flex items-center justify-center gap-1"
+                        >
+                          <ShoppingBag className="w-3 h-3" />
+                          <span>Move to Bag</span>
+                        </button>
+                        <button
+                          onClick={() => router.push(`/product/${product.id}`)}
+                          className="py-2 bg-zinc-800 hover:bg-zinc-750 border border-zinc-700/40 hover:border-zinc-650 text-zinc-355 hover:text-white rounded-xl text-[10px] font-bold text-center transition-all cursor-pointer"
+                        >
+                          View Details
+                        </button>
+                      </div>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
         ) : (
           /* PAST ORDERS TRACKER VIEW */
           <div className="space-y-8 max-w-4xl mx-auto">
@@ -1561,7 +1664,7 @@ export default function DashboardPage() {
                               <div className="text-[9px] font-semibold leading-relaxed">
                                 {(() => {
                                   const orderDate = new Date(order.created_at);
-                                  if (isNaN(orderDate.getTime())) return "Estimated: 3-5 Business Days";
+                                  if (isNaN(orderDate.getTime())) return "Estimated: 7-10 Business Days";
                                   
                                   if (order.status?.toLowerCase() === "delivered") {
                                     const deliveredDate = new Date(orderDate);
@@ -1570,9 +1673,9 @@ export default function DashboardPage() {
                                   }
                                   
                                   const minDate = new Date(orderDate);
-                                  minDate.setDate(orderDate.getDate() + 3);
+                                  minDate.setDate(orderDate.getDate() + 7);
                                   const maxDate = new Date(orderDate);
-                                  maxDate.setDate(orderDate.getDate() + 5);
+                                  maxDate.setDate(orderDate.getDate() + 10);
                                   
                                   const minFormatted = minDate.toLocaleDateString(undefined, { month: 'short', day: 'numeric' });
                                   const maxFormatted = maxDate.toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' });
@@ -1717,7 +1820,7 @@ export default function DashboardPage() {
                         required
                         value={customerName}
                         onChange={(e) => setCustomerName(e.target.value)}
-                        placeholder="e.g. John Doe"
+                        placeholder="Enter recipient name"
                         className="w-full bg-zinc-900/60 border border-zinc-800 rounded-lg px-3.5 py-2 text-xs text-white placeholder-zinc-600 focus:outline-none focus:border-indigo-500"
                       />
                     </div>
@@ -1731,7 +1834,7 @@ export default function DashboardPage() {
                         required
                         value={customerPhone}
                         onChange={(e) => setCustomerPhone(e.target.value)}
-                        placeholder="e.g. +1 (555) 019-2834"
+                        placeholder="Enter 10-digit mobile number"
                         className="w-full bg-zinc-900/60 border border-zinc-800 rounded-lg px-3.5 py-2 text-xs text-white placeholder-zinc-600 focus:outline-none focus:border-indigo-500"
                       />
                     </div>
@@ -1744,24 +1847,10 @@ export default function DashboardPage() {
                         type="text"
                         required
                         value={customerAddress}
-                        onChange={(e) => handleAddressChange(e.target.value)}
-                        placeholder="e.g. 1600 Amphitheatre Pkwy"
+                        onChange={(e) => setCustomerAddress(e.target.value)}
+                        placeholder="Enter street address"
                         className="w-full bg-zinc-900/60 border border-zinc-800 rounded-lg px-3.5 py-2 text-xs text-white placeholder-zinc-600 focus:outline-none focus:border-indigo-500"
                       />
-                      {addressSuggestions.length > 0 && (
-                        <div className="absolute top-full left-0 right-0 mt-1 bg-zinc-950 border border-zinc-900 rounded-xl shadow-2xl z-30 max-h-40 overflow-y-auto divide-y divide-zinc-900 backdrop-blur-md">
-                          {addressSuggestions.map((suggestion, idx) => (
-                            <button
-                              key={idx}
-                              type="button"
-                              onClick={() => selectAddressSuggestion(suggestion)}
-                              className="w-full text-left px-4 py-2.5 text-[10px] text-zinc-400 hover:text-white hover:bg-indigo-600/30 cursor-pointer transition-colors"
-                            >
-                              <span className="font-bold text-zinc-200">{suggestion.address}</span>, {suggestion.city} {suggestion.zip}
-                            </button>
-                          ))}
-                        </div>
-                      )}
                     </div>
 
                     <div className="grid grid-cols-2 gap-4">
@@ -2314,10 +2403,10 @@ export default function DashboardPage() {
                   
                   <div className="space-y-5 relative pl-5 border-l border-zinc-850">
                     {[
-                      { step: 1, title: "Custom Design Hydrated", loc: "Print Lab - San Francisco, CA", desc: "Your 3D canvas textures and customized decals have been parsed. High-resolution print-matching package generated.", activeLoc: "37.7749° N, 122.4194° W" },
-                      { step: 2, title: "Production Quality Clearance", loc: "Manufacturing - Denver, CO", desc: "Physical cotton fabric custom printed, stitched, and detailed by textile artisans. Visual audit check complete.", activeLoc: "39.7392° N, 104.9903° W" },
-                      { step: 3, title: "Handed Over to Carrier (In Transit)", loc: "Logistics Sorting Hub - Chicago, IL", desc: "Fulfillment package packaged securely in organic studio sleeve and dispatched into carrier freight network.", activeLoc: "41.8781° N, 87.6298° W" },
-                      { step: 4, title: "Delivered to Customer Doorstep", loc: `Home Address - ${selectedTrackingOrder.shipping_address?.city || "Destination"}`, desc: "Package handed over directly to client or left in a safe delivery checkpoint. Thank you for designing!", activeLoc: "Arrived Safely" }
+                      { step: 1, title: "Custom Design Received", loc: "Digital Customization Studio", desc: "Your 3D custom specifications and design package have been successfully queued for custom fabrication.", activeLoc: "Tailoring Queue" },
+                      { step: 2, title: "Custom Fabrication Completed", loc: "Thread 3D Stitched Lab", desc: "Garment printed, assembled, and cleared for delivery packaging after audit inspection.", activeLoc: "Fabricated & Packed" },
+                      { step: 3, title: "Package Handed to Carrier", loc: "Logistics Distribution Center", desc: "Dispatched into local logistics network. Package is in transit to destination.", activeLoc: "In Transit" },
+                      { step: 4, title: "Delivered to Doorstep", loc: `Destination - ${selectedTrackingOrder.shipping_address?.city || "Customer Address"}`, desc: "Package handed over directly to recipient or placed in secure delivery box.", activeLoc: "Arrived Safely" }
                     ].map((cp) => {
                       const isReached = activeShipmentCheckpointStep >= cp.step;
                       const isCurrent = activeShipmentCheckpointStep === cp.step;

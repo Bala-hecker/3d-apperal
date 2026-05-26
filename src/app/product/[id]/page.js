@@ -130,6 +130,10 @@ export default function ProductDetailPage({ params }) {
       }
       localStorage.setItem("apparel_wishlist", JSON.stringify(updated));
       setIsWishlisted(!isWishlisted);
+      
+      // Dispatch custom event to sync shared Navbar badge
+      window.dispatchEvent(new Event("wishlist-updated"));
+
       setActiveToast({
         title: isWishlisted ? "💔 Removed from Wishlist" : "❤️ Added to Wishlist",
         message: isWishlisted ? "Item removed from your saved list." : `${product?.name} saved to your wishlist!`
@@ -277,10 +281,59 @@ export default function ProductDetailPage({ params }) {
     const controls = new OrbitControls(camera, renderer.domElement);
     controls.enableDamping = true; controls.dampingFactor = 0.05;
     controls.maxDistance = 10; controls.minDistance = 1; controls.target.set(0, 0.35, 0);
-    const textureLoader = new THREE.TextureLoader();
-    textureLoader.load(product.texture_url, (loadedTexture) => {
-      loadedTexture.colorSpace = THREE.SRGBColorSpace;
-      loadedTexture.flipY = false;
+    // Dynamically process the flat layout texture to match the Studio's alignment and seamless base color
+    const img = new Image();
+    img.crossOrigin = "anonymous";
+    img.onload = () => {
+      const canvas = document.createElement("canvas");
+      canvas.width = 512;
+      canvas.height = 512;
+      const ctx = canvas.getContext("2d");
+      if (!ctx) return;
+      
+      const w = 512;
+      const h = 512;
+      const halfW = 256;
+      
+      // Draw split halves 1:1 exactly as-is to map front/back bodices correctly
+      ctx.drawImage(img, 0, 0, img.width / 2, img.height, 0, 0, halfW, h);
+      ctx.drawImage(img, img.width / 2, 0, img.width / 2, img.height, halfW, 0, halfW, h);
+      
+      // Perform pixel replacement to clean up neutral grey backgrounds
+      try {
+        const imgData = ctx.getImageData(0, 0, w, h);
+        const data = imgData.data;
+        
+        const rTarget = 255;
+        const gTarget = 255;
+        const bTarget = 255;
+
+        for (let i = 0; i < data.length; i += 4) {
+          const r = data[i];
+          const g = data[i+1];
+          const b = data[i+2];
+          
+          const diffRG = Math.abs(r - g);
+          const diffGB = Math.abs(g - b);
+          const diffRB = Math.abs(r - b);
+          
+          if (diffRG < 18 && diffGB < 18 && diffRB < 18) {
+            if (r >= 85 && r <= 225) {
+              data[i] = rTarget;
+              data[i+1] = gTarget;
+              data[i+2] = bTarget;
+            }
+          }
+        }
+        ctx.putImageData(imgData, 0, 0);
+      } catch (pixelErr) {
+        console.warn("Product detail page pixel replacement failed:", pixelErr);
+      }
+      
+      const processedTexture = new THREE.CanvasTexture(canvas);
+      processedTexture.colorSpace = THREE.SRGBColorSpace;
+      processedTexture.flipY = true; // Auto-flip vertically to align right-side up in WebGL UV space
+      
       const loader = new GLTFLoader();
       loader.load(product.glb_file_url, (gltf) => {
         const model = gltf.scene;
@@ -288,7 +341,7 @@ export default function ProductDetailPage({ params }) {
         model.traverse((node) => {
           if (node.isMesh) {
             node.castShadow = true; node.receiveShadow = true;
-            node.material.map = loadedTexture;
+            node.material.map = processedTexture;
             if (node.material.color) node.material.color.set("#ffffff");
             node.material.roughness = 0.8; node.material.metalness = 0.1; node.material.needsUpdate = true;
           }
@@ -304,7 +357,9 @@ export default function ProductDetailPage({ params }) {
         scene.add(model);
         setLoading3D(false);
       }, undefined, () => setLoading3D(false));
-    }, undefined, () => setLoading3D(false));
+    };
+    img.onerror = () => setLoading3D(false);
+    img.src = product.texture_url;
     const animate = () => {
       controls.update(); renderer.render(scene, camera);
       animateFrameIdRef.current = requestAnimationFrame(animate);
@@ -330,8 +385,17 @@ export default function ProductDetailPage({ params }) {
     if (!product) return [];
     const baseList = [product.texture_url];
     if (product.gallery_urls) {
-      const additional = product.gallery_urls.split(",").map(url => url.trim()).filter(Boolean);
-      baseList.push(...additional);
+      let additional = [];
+      if (product.gallery_urls.startsWith("data:image")) {
+        additional = [product.gallery_urls];
+      } else {
+        additional = product.gallery_urls.split(",").map(url => url.trim()).filter(Boolean);
+      }
+      additional.forEach(url => {
+        if (!baseList.includes(url)) {
+          baseList.push(url);
+        }
+      });
     }
     return baseList;
   };
@@ -366,20 +430,48 @@ export default function ProductDetailPage({ params }) {
     e.preventDefault();
     setPincodeError(""); setEstimationResult(null);
     if (!pincode.trim() || !/^[1-9][0-9]{5}$/.test(pincode)) {
-      setPincodeError("Please enter a valid 6-digit postal zip code."); return;
+      setPincodeError("Please enter a valid 6-digit Indian PIN code."); return;
     }
-    const startsWith = pincode.charAt(0);
+    
+    const startsWith3 = pincode.substring(0, 3);
+    const startsWith2 = pincode.substring(0, 2);
+    const startsWith1 = pincode.charAt(0);
     const today = new Date();
-    let estimate = { date: "", carrier: "", hub: "" };
-    if (startsWith === "5" || startsWith === "6") {
-      const d = new Date(today); d.setDate(today.getDate() + 1);
-      estimate = { date: `Tomorrow, ${d.toLocaleDateString(undefined, { weekday: 'long', month: 'short', day: 'numeric' })}`, carrier: "BlueDart Express Air", hub: "Bangalore 3D Hub" };
-    } else if (startsWith === "1" || startsWith === "2") {
-      const d = new Date(today); d.setDate(today.getDate() + 2);
-      estimate = { date: d.toLocaleDateString(undefined, { weekday: 'long', month: 'short', day: 'numeric' }), carrier: "BlueDart Priority", hub: "New Delhi Warehouse" };
+    let estimate = { date: "", carrier: "", hub: "Chennai Customization Hub" };
+    
+    // Check zone distance from Chennai
+    if (startsWith3 >= "600" && startsWith3 <= "603" || startsWith3 === "609" || pincode.startsWith("600")) {
+      // Local Chennai Pincodes (Fastest Local Dispatch)
+      const d = new Date(today); d.setDate(today.getDate() + 5); 
+      estimate = { 
+        date: `Estimated: 3-5 Business Days (${d.toLocaleDateString(undefined, { weekday: 'long', month: 'short', day: 'numeric' })})`, 
+        carrier: "BlueDart Local Express", 
+        hub: "Chennai Main Customization Hub" 
+      };
+    } else if (startsWith2 >= "60" && startsWith2 <= "64") {
+      // Tamil Nadu State region
+      const d = new Date(today); d.setDate(today.getDate() + 7); 
+      estimate = { 
+        date: `Estimated: 5-7 Business Days (${d.toLocaleDateString(undefined, { weekday: 'long', month: 'short', day: 'numeric' })})`, 
+        carrier: "Delhivery Surface Priority", 
+        hub: "Chennai Main Customization Hub" 
+      };
+    } else if (startsWith1 === "5" || startsWith1 === "6") {
+      // South India Zone (Karnataka, Kerala, AP, Telangana)
+      const d = new Date(today); d.setDate(today.getDate() + 8); 
+      estimate = { 
+        date: `Estimated: 6-8 Business Days (${d.toLocaleDateString(undefined, { weekday: 'long', month: 'short', day: 'numeric' })})`, 
+        carrier: "BlueDart Priority Air", 
+        hub: "Chennai Main Customization Hub" 
+      };
     } else {
-      const d = new Date(today); d.setDate(today.getDate() + 4);
-      estimate = { date: d.toLocaleDateString(undefined, { weekday: 'long', month: 'short', day: 'numeric' }), carrier: "DHL Ground", hub: "Mumbai Warehouse" };
+      // Pan-India National Zone (Rest of India)
+      const d = new Date(today); d.setDate(today.getDate() + 12); 
+      estimate = { 
+        date: `Estimated: 8-12 Business Days (${d.toLocaleDateString(undefined, { weekday: 'long', month: 'short', day: 'numeric' })})`, 
+        carrier: "Delhivery National Air", 
+        hub: "Chennai Main Customization Hub" 
+      };
     }
     setEstimationResult(estimate);
   };
@@ -454,6 +546,7 @@ export default function ProductDetailPage({ params }) {
 
   const baseFaqs = [
     { question: "Can I customize the color overlay or upload logos on this product?", answer: "No, this is a ready-to-wear pre-designed catalog item. For custom decals and 3D color mapping, head to our 3D Design Studio tab." },
+    { question: "What is your return and exchange policy?", answer: "Due to the custom-made, on-demand fabrication and print sublimation process of all our customized items, we do not accept returns, refunds, or exchanges once an order enters production." },
     { question: "What specific fabric structure does this use?", answer: "High-density ringspun organic cotton (380 GSM). Premium double-knitted draping structure that fits flat with minimal wrinkles." },
     { question: "How long does fabrication take?", answer: "Pre-designed inventory is processed at our Bangalore/Delhi hubs and shipped instantly. Use the zip code estimator for exact dates." }
   ];
@@ -869,7 +962,7 @@ export default function ProductDetailPage({ params }) {
                 <div className="grid grid-cols-3 gap-2 text-center select-none">
                   {[
                     { icon: <ShieldCheck className="w-4 h-4 mx-auto text-indigo-400 mb-1" />, label: "Secure Payment" },
-                    { icon: <RefreshCw className="w-4 h-4 mx-auto text-indigo-400 mb-1" />, label: "Easy Returns" },
+                    { icon: <X className="w-4 h-4 mx-auto text-rose-500 mb-1" />, label: "No Returns" },
                     { icon: <Star className="w-4 h-4 mx-auto text-amber-400 mb-1" />, label: "Quality Fabric" },
                   ].map((badge, i) => (
                     <div key={i} className="bg-zinc-900/20 border border-zinc-900/60 p-3 rounded-xl hover:border-zinc-800 transition-colors">
@@ -877,6 +970,17 @@ export default function ProductDetailPage({ params }) {
                       <span className="text-[9px] text-zinc-500 font-bold block uppercase tracking-wider">{badge.label}</span>
                     </div>
                   ))}
+                </div>
+
+                {/* Return Policy Notice Disclaimer */}
+                <div className="bg-rose-950/20 border border-rose-900/30 p-3.5 rounded-2xl flex items-start gap-2.5">
+                  <span className="text-rose-500 font-bold text-xs select-none">⚠️</span>
+                  <div className="flex-1">
+                    <h4 className="text-[10px] font-bold text-rose-400 uppercase tracking-wider">No Returns or Exchanges</h4>
+                    <p className="text-[9px] text-zinc-500 leading-normal mt-0.5 font-medium">
+                      Because each apparel garment is custom-printed, tailored, and fabricated specifically to your order, we do not accept returns or exchanges.
+                    </p>
+                  </div>
                 </div>
               </div>
             </div>
