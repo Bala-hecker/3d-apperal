@@ -1371,7 +1371,7 @@ export default function StudioPage() {
               <Layers className="w-3.5 h-3.5 text-indigo-400" />
               <span>Garment Library</span>
             </h3>
-            <p className="text-[10px] text-zinc-600 mt-1">Select a base garment mesh below to begin customization.</p>
+            <p className="text-sm text-zinc-600 mt-1">Select a base garment mesh below to begin customization.</p>
             
             {/* Category Filter Pills */}
             <div className="flex flex-wrap gap-1 mt-3">
@@ -1385,7 +1385,7 @@ export default function StudioPage() {
                 <button
                   key={tab.id}
                   onClick={() => setSelectedCategoryTab(tab.id)}
-                  className={`px-2 py-1 rounded-md text-[9px] font-bold uppercase tracking-wider transition-all cursor-pointer ${
+                  className={`px-2 py-1 rounded-md text-xs font-bold uppercase tracking-wider transition-all cursor-pointer ${
                     selectedCategoryTab === tab.id
                       ? "bg-indigo-600 text-white shadow-md shadow-indigo-500/20"
                       : "bg-zinc-900/60 text-zinc-400 hover:text-zinc-200 hover:bg-zinc-900 border border-zinc-800/40"
@@ -1402,12 +1402,12 @@ export default function StudioPage() {
             {loadingProducts ? (
               <div className="py-12 flex flex-col items-center justify-center text-zinc-500">
                 <Loader2 className="w-5 h-5 animate-spin text-zinc-400 mb-2" />
-                <p className="text-[10px]">Syncing cloud library...</p>
+                <p className="text-sm">Syncing cloud library...</p>
               </div>
             ) : products.length === 0 ? (
               <div className="py-10 text-center px-4">
                 <p className="text-xs text-zinc-500">No models in database.</p>
-                <Link href="/admin" className="text-[10px] text-indigo-400 hover:underline mt-2 block">
+                <Link href="/admin" className="text-sm text-indigo-400 hover:underline mt-2 block">
                   Add custom .glb models →
                 </Link>
               </div>
@@ -1420,7 +1420,7 @@ export default function StudioPage() {
                 if (filtered.length === 0) {
                   return (
                     <div className="py-12 text-center px-4">
-                      <p className="text-[11px] text-zinc-500 font-medium">No templates in this category.</p>
+                      <p className="text-sm text-zinc-500 font-medium">No templates in this category.</p>
                     </div>
                   );
                 }
@@ -1446,7 +1446,7 @@ export default function StudioPage() {
                       <h4 className="text-xs font-semibold text-zinc-200 group-hover:text-white transition-colors truncate">
                         {product.name}
                       </h4>
-                      <p className="text-[9px] text-zinc-500 mt-0.5 truncate">
+                      <p className="text-xs text-zinc-500 mt-0.5 truncate">
                         Deploy: {new Date(product.created_at).toLocaleDateString()}
                       </p>
                     </div>
@@ -1464,7 +1464,7 @@ export default function StudioPage() {
               <Sparkles className="w-3.5 h-3.5 text-indigo-400 animate-pulse" />
               <span>Premium Fabrics</span>
             </h3>
-            <p className="text-[9px] text-zinc-500 mb-3.5 leading-relaxed">
+            <p className="text-xs text-zinc-500 mb-3.5 leading-relaxed">
               Tailor physical surface reflections. Premium selections add a custom upcharge.
             </p>
             
@@ -1480,20 +1480,20 @@ export default function StudioPage() {
                   }`}
                 >
                   <div className="flex items-center justify-between w-full">
-                    <span className={`text-[11px] font-bold ${selectedFabric === key ? "text-indigo-400" : "text-zinc-300 group-hover:text-white"}`}>
+                    <span className={`text-sm font-bold ${selectedFabric === key ? "text-indigo-400" : "text-zinc-300 group-hover:text-white"}`}>
                       {key === "cotton" ? "Matte Organic Cotton" : key === "polyester" ? "Shiny Athletic Polyester" : "Heavy Luxury Fleece"}
                     </span>
                     {value.upcharge > 0 ? (
-                      <span className="text-[8px] font-extrabold px-1.5 py-0.5 bg-emerald-500/10 text-emerald-400 border border-emerald-500/20 rounded-md">
+                      <span className="text-sm font-extrabold px-1.5 py-0.5 bg-emerald-500/10 text-emerald-400 border border-emerald-500/20 rounded-md">
                         +₹{value.upcharge.toLocaleString('en-IN')}
                       </span>
                     ) : (
-                      <span className="text-[8px] font-extrabold px-1.5 py-0.5 bg-zinc-850 text-zinc-400 border border-zinc-800 rounded-md">
+                      <span className="text-sm font-extrabold px-1.5 py-0.5 bg-zinc-850 text-zinc-400 border border-zinc-800 rounded-md">
                         FREE
                       </span>
                     )}
                   </div>
-                  <span className="text-[9px] text-zinc-500 leading-snug">
+                  <span className="text-xs text-zinc-500 leading-snug">
                     {key === "cotton" ? "Flat, organic 100% cotton threads" : key === "polyester" ? "Reflective, sleek high-performance finish" : "Extra thick, warm luxury heavy fleece feel"}
                   </span>
                 </button>
@@ -1596,14 +1596,14 @@ export default function StudioPage() {
                   <div className="flex items-center justify-between text-xs gap-4 w-full">
                     <div className="flex flex-col">
                       <span className="font-semibold text-zinc-300">Base Garment Specs</span>
-                      <span className="text-[10px] text-zinc-500 mt-0.5 truncate max-w-[100px]">
+                      <span className="text-sm text-zinc-500 mt-0.5 truncate max-w-[100px]">
                         {activeProduct ? activeProduct.name : "None Loaded"}
                       </span>
                     </div>
 
                     {/* Garment Base Color Picker */}
                     <div className="flex items-center gap-2 border-l border-zinc-800/80 px-4">
-                      <span className="text-[10px] text-zinc-500 font-semibold uppercase">Fabric Color:</span>
+                      <span className="text-sm text-zinc-500 font-semibold uppercase">Fabric Color:</span>
                       <input
                         type="color"
                         value={garmentColor}
@@ -1616,7 +1616,7 @@ export default function StudioPage() {
                     {/* Decal Scale Controls (Only visible if an image is selected) */}
                     {selectedObjectType === "image" && (
                       <div className="flex items-center gap-2 border-l border-zinc-800/80 px-4 animate-fade-in">
-                        <span className="text-[10px] text-zinc-500 font-semibold uppercase">Decal Size:</span>
+                        <span className="text-sm text-zinc-500 font-semibold uppercase">Decal Size:</span>
                         <div className="flex items-center gap-1 bg-zinc-950 border border-zinc-850 rounded-lg p-0.5">
                           <button
                             onClick={() => handleScaleSelected(0.9)}
@@ -1625,7 +1625,7 @@ export default function StudioPage() {
                           >
                             -
                           </button>
-                          <span className="text-[9px] text-zinc-600 font-mono px-1 select-none">SCALE</span>
+                          <span className="text-xs text-zinc-600 font-mono px-1 select-none">SCALE</span>
                           <button
                             onClick={() => handleScaleSelected(1.1)}
                             className="w-6 h-6 hover:bg-zinc-900 rounded font-bold text-zinc-400 hover:text-white flex items-center justify-center cursor-pointer text-sm"
@@ -1663,7 +1663,7 @@ export default function StudioPage() {
                   </button>
 
                   <div className="flex items-center gap-2">
-                    <span className="text-[10px] text-zinc-500 font-semibold uppercase">Color:</span>
+                    <span className="text-sm text-zinc-500 font-semibold uppercase">Color:</span>
                     <input
                       type="color"
                       value={textColor}
@@ -1694,7 +1694,7 @@ export default function StudioPage() {
                   </div>
 
                   <div className="flex items-center gap-2">
-                    <span className="text-[10px] text-zinc-500 font-semibold uppercase">Fill:</span>
+                    <span className="text-sm text-zinc-500 font-semibold uppercase">Fill:</span>
                     <input
                       type="color"
                       value={fillColor}
@@ -1721,7 +1721,7 @@ export default function StudioPage() {
                 ) : (
                   <span className="w-2 h-2 bg-emerald-500 rounded-full shadow-lg shadow-emerald-500/20" />
                 )}
-                <span className="text-[9px] text-zinc-500 font-semibold">WEBGL ENGINE</span>
+                <span className="text-xs text-zinc-500 font-semibold">WEBGL ENGINE</span>
               </div>
             </div>
 
@@ -1733,15 +1733,15 @@ export default function StudioPage() {
               {isLoadingModel && (
                 <div className="absolute inset-0 flex flex-col items-center justify-center text-zinc-400 bg-zinc-950/60 backdrop-blur-sm z-10">
                   <Loader2 className="w-6 h-6 animate-spin text-indigo-500 mb-2" />
-                  <span className="text-[10px] font-semibold tracking-widest uppercase">Fetching 3D mesh...</span>
+                  <span className="text-sm font-semibold tracking-widest uppercase">Fetching 3D mesh...</span>
                 </div>
               )}
             </div>
 
             {/* Showroom Lighting Presets Selector */}
-            <div className="px-4 py-2 border-t border-zinc-850 bg-zinc-950/40 flex items-center justify-between gap-2 select-none">
-              <span className="text-[9px] text-zinc-500 font-semibold uppercase tracking-wider">Lighting:</span>
-              <div className="flex items-center gap-1">
+            <div className="px-3 py-2 border-t border-zinc-850 bg-zinc-950/40 flex items-center justify-between gap-1.5 select-none">
+              <span className="text-[10px] text-zinc-500 font-bold uppercase tracking-widest whitespace-nowrap">Lighting:</span>
+              <div className="flex items-center gap-1 overflow-x-auto scrollbar-hide">
                 {[
                   { id: "studio", label: "Studio" },
                   { id: "showroom", label: "Showroom" },
@@ -1750,9 +1750,9 @@ export default function StudioPage() {
                   <button
                     key={preset.id}
                     onClick={() => setLightingPreset(preset.id)}
-                    className={`px-2 py-0.5 rounded text-[8px] font-bold uppercase transition-all cursor-pointer border ${
+                    className={`px-1.5 py-0.5 rounded text-[10px] font-extrabold uppercase transition-all cursor-pointer whitespace-nowrap border ${
                       lightingPreset === preset.id
-                        ? "bg-indigo-600/10 border-indigo-500 text-indigo-400 font-extrabold"
+                        ? "bg-indigo-600/10 border-indigo-500 text-indigo-400 shadow-sm shadow-indigo-500/20"
                         : "bg-zinc-900/50 border-zinc-850 text-zinc-400 hover:text-zinc-300 hover:border-zinc-800"
                     }`}
                   >
@@ -1764,7 +1764,7 @@ export default function StudioPage() {
 
             {/* Base Colors Selector */}
             <div className="px-4 py-2 border-t border-zinc-850 bg-zinc-950/20 flex items-center justify-between gap-2">
-              <span className="text-[9px] text-zinc-500 font-semibold uppercase tracking-wider">Base Color:</span>
+              <span className="text-xs text-zinc-500 font-semibold uppercase tracking-wider">Base Color:</span>
               <div className="flex items-center gap-1.5">
                 {[
                   { name: "White", value: "#ffffff" },
@@ -1791,7 +1791,7 @@ export default function StudioPage() {
             </div>
 
             {/* Instruction tooltip in 3D frame */}
-            <div className="px-4 py-2 border-t border-zinc-850/60 bg-zinc-950/60 text-[9px] text-zinc-500 text-center select-none">
+            <div className="px-4 py-2 border-t border-zinc-850/60 bg-zinc-950/60 text-xs text-zinc-500 text-center select-none">
               Left Click + Drag to rotate 3D model. Scroll to zoom.
             </div>
 
@@ -1809,14 +1809,14 @@ export default function StudioPage() {
               <ShieldCheck className="w-5 h-5 text-indigo-400" />
               <span>Publish to Shop Catalog</span>
             </h3>
-            <p className="text-[11px] text-zinc-400 mb-6">
+            <p className="text-sm text-zinc-400 mb-6">
               Style and deploy this custom design directly into the shop's standard catalog for direct customer purchase.
             </p>
 
             <div className="space-y-4">
               {/* Product Name */}
               <div>
-                <label className="block text-[10px] font-semibold text-zinc-400 uppercase tracking-wider mb-1.5">
+                <label className="block text-sm font-semibold text-zinc-400 uppercase tracking-wider mb-1.5">
                   Pre-designed Product Name
                 </label>
                 <input
@@ -1831,7 +1831,7 @@ export default function StudioPage() {
 
               {/* Product Price */}
               <div>
-                <label className="block text-[10px] font-semibold text-zinc-400 uppercase tracking-wider mb-1.5">
+                <label className="block text-sm font-semibold text-zinc-400 uppercase tracking-wider mb-1.5">
                   Base Price (₹ INR)
                 </label>
                 <input
@@ -1847,7 +1847,7 @@ export default function StudioPage() {
 
               {/* Product Category */}
               <div>
-                <label className="block text-[10px] font-semibold text-zinc-400 uppercase tracking-wider mb-1.5">
+                <label className="block text-sm font-semibold text-zinc-400 uppercase tracking-wider mb-1.5">
                   Store Category
                 </label>
                 <select
@@ -1864,7 +1864,7 @@ export default function StudioPage() {
 
               {/* Product Description */}
               <div>
-                <label className="block text-[10px] font-semibold text-zinc-400 uppercase tracking-wider mb-1.5">
+                <label className="block text-sm font-semibold text-zinc-400 uppercase tracking-wider mb-1.5">
                   Product Description
                 </label>
                 <textarea

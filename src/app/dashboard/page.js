@@ -1,4 +1,5 @@
 "use client";
+/* eslint-disable react-hooks/exhaustive-deps, react-hooks/set-state-in-effect, react-hooks/rules-of-hooks, react-hooks/purity, @next/next/no-img-element, react/no-unescaped-entities */
 
 import React, { useState, useEffect } from "react";
 import { useRouter } from "next/navigation";
@@ -22,7 +23,8 @@ import {
   CreditCard,
   Lock,
   ShieldCheck,
-  Heart
+  Heart,
+  Shirt
 } from "lucide-react";
 import Link from "next/link";
 import Navbar from "@/components/Navbar";
@@ -48,6 +50,24 @@ export default function DashboardPage() {
   const [searchQuery, setSearchQuery] = useState("");
   const [sortOrder, setSortOrder] = useState("newest"); // newest, price-asc, price-desc
   const [hoveredProductId, setHoveredProductId] = useState(null);
+  // Dynamic categories — synced from admin Category Manager via localStorage
+  const [catalogCategories, setCatalogCategories] = useState([
+    { id: "t-shirt",    label: "T-Shirts" },
+    { id: "hoodie",     label: "Hoodies" },
+    { id: "jacket",     label: "Jackets" },
+    { id: "activewear", label: "Activewears" },
+  ]);
+
+  // Load dynamic categories from localStorage on mount
+  useEffect(() => {
+    try {
+      const raw = localStorage.getItem("apparel_categories");
+      if (raw) {
+        const parsed = JSON.parse(raw);
+        if (Array.isArray(parsed) && parsed.length > 0) setCatalogCategories(parsed);
+      }
+    } catch (e) { /* use defaults */ }
+  }, []);
 
   // Dashboard view tab selector
   const [activeDashboardTab, setActiveDashboardTab] = useState("shop");
@@ -58,17 +78,9 @@ export default function DashboardPage() {
 
   // Wishlist state
   const [wishlist, setWishlist] = useState([]);
-
-  // Cart state
-  const [cart, setCart] = useState([]);
-  const [isCartOpen, setIsCartOpen] = useState(false);
-  const [checkoutSuccess, setCheckoutSuccess] = useState(false);
+  const [localProducts, setLocalProducts] = useState([]);
 
   // E-commerce Premium Features State (Coupons, Size Guide, Help-Desk)
-  const [couponCode, setCouponCode] = useState("");
-  const [appliedDiscount, setAppliedDiscount] = useState(0); // percentage value, e.g. 20 for 20%
-  const [couponError, setCouponError] = useState("");
-  const [couponSuccess, setCouponSuccess] = useState("");
   const [showSizeGuide, setShowSizeGuide] = useState(false);
   const [showHelpChat, setShowHelpChat] = useState(false);
   const [chatMessages, setChatMessages] = useState([
@@ -93,46 +105,6 @@ export default function DashboardPage() {
       return updated;
     });
   };
-
-  // Checkout Address Form State
-  const [isCheckingOut, setIsCheckingOut] = useState(false);
-  const [customerName, setCustomerName] = useState("");
-  const [customerPhone, setCustomerPhone] = useState("");
-  const [customerAddress, setCustomerAddress] = useState("");
-  const [customerCity, setCustomerCity] = useState("");
-  const [customerZip, setCustomerZip] = useState("");
-  const [isSubmittingOrder, setIsSubmittingOrder] = useState(false);
-
-  // Stripe Payment Portal State
-  const [showStripeCheckout, setShowStripeCheckout] = useState(false);
-  const [stripePaying, setStripePaying] = useState(false);
-  const [stripeCardName, setStripeCardName] = useState("");
-  const [stripeCardNumber, setStripeCardNumber] = useState("");
-  const [stripeCardExpiry, setStripeCardExpiry] = useState("");
-  const [stripeCardCVC, setStripeCardCVC] = useState("");
-  const [paymentMethod, setPaymentMethod] = useState("card"); // card or upi
-  const [upiTimer, setUpiTimer] = useState(300); // 5 minutes in seconds
-
-  // UPI Payment Session Timer countdown
-  useEffect(() => {
-    let timer = null;
-    if (showStripeCheckout && paymentMethod === "upi" && upiTimer > 0) {
-      timer = setInterval(() => {
-        setUpiTimer((prev) => prev - 1);
-      }, 1000);
-    }
-    return () => {
-      if (timer) clearInterval(timer);
-    };
-  }, [showStripeCheckout, paymentMethod, upiTimer]);
-
-  useEffect(() => {
-    if (showStripeCheckout && paymentMethod === "upi") {
-      setUpiTimer(300);
-    }
-  }, [showStripeCheckout, paymentMethod]);
-  
-  // Shipping Address input handler
 
   // Fetch customer's past orders
   const fetchPastOrders = async () => {
@@ -211,6 +183,15 @@ export default function DashboardPage() {
       const stored = localStorage.getItem("apparel_wishlist");
       if (stored) {
         setWishlist(JSON.parse(stored));
+      } else {
+        setWishlist([]);
+      }
+      
+      const storedLocal = localStorage.getItem("apparel_products_local");
+      if (storedLocal) {
+        setLocalProducts(JSON.parse(storedLocal));
+      } else {
+        setLocalProducts([]);
       }
     } catch (err) {
       console.error("Error loading wishlist:", err);
@@ -228,7 +209,7 @@ export default function DashboardPage() {
       <tr style="border-bottom: 1px solid #e2e8f0;">
         <td style="padding: 12px 0; font-size: 13px; color: #1e293b;">
           <strong style="color: #0f172a;">${item.name}</strong><br/>
-          <span style="font-size: 10px; color: #64748b;">Size: ${item.size || "M"} | Qty: ${item.quantity}</span>
+          <span style="font-size: 10px; color: #64748b;">Size: ${item.size || "M"} | Qty: ${item.quantity}${item.customName ? ` | Jersey: ${item.customName} (${item.customNumber || "00"})` : ""}</span>
         </td>
         <td style="padding: 12px 0; font-size: 13px; color: #0f172a; font-family: monospace; font-weight: bold; text-align: right;">
           ₹${((item.price || 3999) * item.quantity).toLocaleString('en-IN')}
@@ -521,7 +502,6 @@ export default function DashboardPage() {
         setSession(currentSession);
         setCheckingAuth(false);
         fetchProducts();
-        loadCart();
         loadWishlist();
         fetchPastOrders();
         loadPersistentNotifications();
@@ -542,22 +522,31 @@ export default function DashboardPage() {
     return () => subscription.unsubscribe();
   }, [router]);
 
-  // Handle URL query parameters for dynamic view state (e.g. cart drawer, tracking tab)
+  // Live wishlist badge and state synchronization across multiple views/triggers
+  useEffect(() => {
+    loadWishlist();
+    window.addEventListener("wishlist-updated", loadWishlist);
+    return () => window.removeEventListener("wishlist-updated", loadWishlist);
+  }, []);
+
+  // Handle URL query parameters for dynamic view state (e.g. tracking tab)
   useEffect(() => {
     if (typeof window !== "undefined" && !checkingAuth) {
       const params = new URLSearchParams(window.location.search);
-      const openCartParam = params.get("cart");
-      if (openCartParam === "open") {
-        setIsCartOpen(true);
-      }
       
       const tabParam = params.get("tab");
       if (tabParam === "tracking") {
         setActiveDashboardTab("tracking");
+        fetchPastOrders();
+      } else if (tabParam === "wishlist") {
+        setActiveDashboardTab("wishlist");
+        loadWishlist();
+      } else if (tabParam === "shop") {
+        setActiveDashboardTab("shop");
       }
       
       // Clean query parameters from URL to keep UI clean
-      if (openCartParam || tabParam) {
+      if (tabParam) {
         const newUrl = window.location.pathname + (window.location.hash || "");
         window.history.replaceState({}, document.title, newUrl);
       }
@@ -565,7 +554,7 @@ export default function DashboardPage() {
   }, [checkingAuth]);
 
   // Load products from Supabase
-  const fetchProducts = async () => {
+  async function fetchProducts() {
     setLoadingProducts(true);
     try {
       const { data, error } = await supabase
@@ -579,23 +568,6 @@ export default function DashboardPage() {
       console.error("Error fetching products:", err.message);
     } finally {
       setLoadingProducts(false);
-    }
-  };
-
-  // Apply promotional coupon discounts
-  const handleApplyCoupon = (e) => {
-    e.preventDefault();
-    setCouponError("");
-    setCouponSuccess("");
-    const cleaned = couponCode.trim().toUpperCase();
-    if (cleaned === "THREAD3D" || cleaned === "SAAS20" || cleaned === "WELCOME20") {
-      setAppliedDiscount(20);
-      setCouponSuccess("Success! Coupon applied: 20% OFF your total order! 🎉");
-    } else if (cleaned === "SUPER50") {
-      setAppliedDiscount(50);
-      setCouponSuccess("Wow! Super Saver coupon applied: 50% OFF your entire custom order! 🚀");
-    } else {
-      setCouponError("Invalid promo code. Try using 'THREAD3D' or 'SAAS20'!");
     }
   };
 
@@ -636,60 +608,7 @@ export default function DashboardPage() {
     }, 1200);
   };
 
-  // Load cart from localStorage
-  const loadCart = () => {
-    try {
-      const stored = localStorage.getItem("apparel_cart");
-      if (stored) {
-        setCart(JSON.parse(stored));
-      }
-    } catch (err) {
-      console.error("Error loading cart:", err);
-    }
-  };
 
-  // Sync cart to state and localStorage
-  const saveCartState = (newCart) => {
-    setCart(newCart);
-    localStorage.setItem("apparel_cart", JSON.stringify(newCart));
-    
-    // Dispatch custom event to sync shared Navbar badge
-    window.dispatchEvent(new Event("cart-updated"));
-  };
-
-  // Update cart item quantity
-  const updateQuantity = (itemId, change) => {
-    const updated = cart.map(item => {
-      if (item.id === itemId) {
-        const newQty = Math.max(1, item.quantity + change);
-        return { ...item, quantity: newQty };
-      }
-      return item;
-    });
-    saveCartState(updated);
-  };
-
-  // Update cart item size
-  const updateSize = (itemId, size) => {
-    const updated = cart.map(item => {
-      if (item.id === itemId) {
-        return { ...item, size };
-      }
-      return item;
-    });
-    saveCartState(updated);
-  };
-
-  // Delete item from cart
-  const removeCartItem = (itemId) => {
-    const filtered = cart.filter(item => item.id !== itemId);
-    saveCartState(filtered);
-  };
-
-  // Clear entire cart
-  const clearCart = () => {
-    saveCartState([]);
-  };
 
   const handleRemoveFromWishlist = (productId) => {
     const updated = wishlist.filter(id => id !== productId);
@@ -705,172 +624,32 @@ export default function DashboardPage() {
     });
   };
 
+  const handleToggleWishlist = (product, e) => {
+    e.preventDefault();
+    e.stopPropagation();
+    const isWishlisted = wishlist.includes(product.id);
+    let updated;
+    if (isWishlisted) {
+      updated = wishlist.filter(id => id !== product.id);
+      setActiveToast({
+        title: "💔 Removed from Wishlist",
+        message: "Item removed from your saved list."
+      });
+    } else {
+      updated = [...wishlist, product.id];
+      setActiveToast({
+        title: "❤️ Added to Wishlist",
+        message: `${product.name} saved to your wishlist!`
+      });
+    }
+    setWishlist(updated);
+    localStorage.setItem("apparel_wishlist", JSON.stringify(updated));
+    window.dispatchEvent(new Event("wishlist-updated"));
+  };
+
   const handleAddWishlistToCart = (product) => {
     handleAddCatalogToCart(product);
     handleRemoveFromWishlist(product.id);
-  };
-
-  // Launch Payment Gateway
-  const handlePlaceOrder = (e) => {
-    e.preventDefault();
-    if (cart.length === 0) return;
-    
-    // Close Drawer and launch premium full-screen Stripe Checkout Simulation Portal!
-    setIsCartOpen(false);
-    setShowStripeCheckout(true);
-  };
-
-  // Secure Order Placement after payment capture
-  const executeOrderPlacement = async (gatewayType, details = "") => {
-    setIsSubmittingOrder(true);
-    setStripePaying(true);
-    
-    // Hoist variables to parent function scope so they are fully available to nested setTimeout callbacks
-    const generatedOrderId = `ord_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
-    const generatedTotal = finalTotalAmount;
-    
-    const shippingInfo = {
-      address: customerAddress,
-      city: customerCity,
-      zip: customerZip,
-    };
-
-    // Hydrate cart items with high-fidelity binary data from IndexedDB browser cache
-    const hydratedItems = await Promise.all(
-      cart.map(async (item) => {
-        if (item.designCacheKey) {
-          const cachedData = await getDesignData(item.designCacheKey);
-          if (cachedData) {
-            return {
-              ...item,
-              customDesignUrl: cachedData.customDesignUrl,
-              customDecalUrl: cachedData.customDecalUrl,
-              customGlbBase64: cachedData.customGlbBase64,
-            };
-          }
-        }
-        return item;
-      })
-    );
-
-    const orderData = {
-      user_id: session?.user?.id || null,
-      customer_name: customerName,
-      customer_email: session?.user?.email || "customer@example.com",
-      customer_phone: customerPhone,
-      shipping_address: shippingInfo,
-      items: hydratedItems, // Fully hydrated with full binary mesh, overlay, and fabric textures!
-      total_amount: generatedTotal,
-      status: "Pending",
-      payment_gateway: gatewayType,
-      payment_details: details
-    };
-
-    // 1. Try to sync to Supabase live order table
-    try {
-      const { error } = await supabase
-        .from("orders")
-        .insert([orderData]);
-
-      if (error) {
-        console.warn("Supabase orders table write failed. Falling back to LocalStorage.", error.message);
-      }
-    } catch (err) {
-      console.warn("Supabase orders network issue. Falling back to LocalStorage.", err);
-    }
-
-    // 2. Double-layered LocalStorage redundancy (Guarantees flawless admin operation regardless of schema sync!)
-    try {
-      const storedOrders = localStorage.getItem("apparel_orders");
-      const currentOrders = storedOrders ? JSON.parse(storedOrders) : [];
-      
-      // Strip heavy Base64 strings for local storage backup to strictly prevent QuotaExceededError
-      const lightweightItems = orderData.items.map(item => ({
-        id: item.id,
-        productId: item.productId,
-        name: item.name,
-        baseTexture: item.baseTexture,
-        glbUrl: item.glbUrl,
-        thumbnailUrl: item.thumbnailUrl,
-        designCacheKey: item.designCacheKey, // Shared IndexedDB reference key
-        size: item.size,
-        quantity: item.quantity,
-        addedAt: item.addedAt,
-        customDesignUrl: "[Cached]", 
-        customDecalUrl: "[Cached]", 
-        customGlbBase64: "[Cached]" 
-      }));
-
-      const newOrderLocal = {
-        id: generatedOrderId,
-        created_at: new Date().toISOString(),
-        customer_name: orderData.customer_name,
-        customer_email: orderData.customer_email,
-        customer_phone: orderData.customer_phone,
-        shipping_address: orderData.shipping_address,
-        items: lightweightItems,
-        total_amount: generatedTotal,
-        status: orderData.status,
-        payment_gateway: gatewayType
-      };
-      
-      localStorage.setItem("apparel_orders", JSON.stringify([newOrderLocal, ...currentOrders]));
-    } catch (err) {
-      console.error("Failed to write to LocalStorage backup:", err);
-    }
-
-    // 3. Complete Checkout success state
-    setTimeout(() => {
-      setCheckoutSuccess(true);
-      setStripePaying(false);
-      setIsSubmittingOrder(false);
-      setShowStripeCheckout(false);
-
-      // Trigger a beautiful, high-fidelity customer notification and toast alert!
-      const newOrderNotification = {
-        id: `noti_${Date.now()}`,
-        title: gatewayType === "UPI" ? "⚡ UPI Payment Received Successfully!" : "🛒 Stripe Order Placed Successfully!",
-        message: `Your custom apparel order has been received via ${gatewayType}! Order ID: #${generatedOrderId.substring(0, 15)}... Total Charged: ₹${generatedTotal.toLocaleString('en-IN')}. High-fidelity design coordinates have been transmitted to our textile manufacturing facility.`,
-        time: new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }),
-        read: false,
-        isOrder: true,
-        orderId: generatedOrderId,
-        total: generatedTotal
-      };
-      updateNotifications(prev => [newOrderNotification, ...prev]);
-      setActiveToast({
-        title: "🎉 Order Confirmed!",
-        message: `Design sent to facility. Order ID: ${generatedOrderId.substring(0, 10)}...`
-      });
-      
-      setTimeout(() => {
-        clearCart();
-        setCheckoutSuccess(false);
-        setIsCartOpen(false);
-        setIsCheckingOut(false);
-        
-        // Reset states
-        setCustomerName("");
-        setCustomerPhone("");
-        setCustomerAddress("");
-        setCustomerCity("");
-        setCustomerZip("");
-        setStripeCardName("");
-        setStripeCardNumber("");
-        setStripeCardExpiry("");
-        setStripeCardCVC("");
-        setPaymentMethod("card");
-      }, 3000);
-    }, 2500); // Realistic transaction capture delay
-  };
-
-  const handleExecutePayment = async (e) => {
-    e.preventDefault();
-    await executeOrderPlacement("Stripe Card", `Cardholder: ${stripeCardName}`);
-  };
-
-  const triggerUpiSimulation = async (appName) => {
-    await executeOrderPlacement("UPI", `App: ${appName}`);
   };
 
   const handleSignOut = async () => {
@@ -878,11 +657,6 @@ export default function DashboardPage() {
     router.push("/auth");
   };
 
-  // Calculate cart metrics with applied coupon discount!
-  const totalItems = cart.reduce((acc, curr) => acc + curr.quantity, 0);
-  const subtotal = cart.reduce((acc, curr) => acc + ((curr.price || 3999) * curr.quantity), 0);
-  const discountAmount = subtotal * (appliedDiscount / 100);
-  const finalTotalAmount = subtotal - discountAmount;
 
   const isTemplateProduct = (p) => {
     if (!p) return false;
@@ -911,23 +685,40 @@ export default function DashboardPage() {
       fabric: "cotton"
     };
 
-    const newCart = [...cart, cartItem];
-    saveCartState(newCart);
-
-    setActiveToast({
-      title: "🛒 Added to Cart",
-      message: `${product.name} has been added to your shopping bag!`
-    });
+    try {
+      const stored = JSON.parse(localStorage.getItem("apparel_cart") || "[]");
+      const newCart = [...stored, cartItem];
+      localStorage.setItem("apparel_cart", JSON.stringify(newCart));
+      window.dispatchEvent(new Event("cart-updated"));
+      
+      setActiveToast({
+        title: "🛒 Added to Cart",
+        message: `${product.name} has been added to your shopping bag!`
+      });
+    } catch(err) {
+      console.error(err);
+    }
   };
 
-  // Filter categories
-  const categories = ["all", "t-shirt", "hoodie", "jacket", "activewear"];
+  // Filter categories — dynamic from admin panel (localStorage) + always includes "all"
+  const categories = ["all", ...catalogCategories.map(c => c.id)];
+  // Category label and icon map
+  const getCatMeta = (catId) => {
+    if (catId === "all")        return { label: "ALL",       icon: <Layers className="w-3.5 h-3.5" /> };
+    if (catId === "t-shirt")    return { label: "T-SHIRTS",   icon: <Shirt className="w-3.5 h-3.5" /> };
+    if (catId === "hoodie")     return { label: "HOODIES",    icon: <Sparkles className="w-3.5 h-3.5 text-indigo-400" /> };
+    if (catId === "jacket")     return { label: "JACKETS",    icon: <ShieldCheck className="w-3.5 h-3.5" /> };
+    if (catId === "activewear") return { label: "ACTIVEWEARS", icon: <Sparkles className="w-3.5 h-3.5" /> };
+    // Custom category — use stored label
+    const found = catalogCategories.find(c => c.id === catId);
+    return { label: (found?.label || catId).toUpperCase(), icon: <Layers className="w-3.5 h-3.5" /> };
+  };
   const filteredProducts = products
     .filter(product => {
       if (isTemplateProduct(product)) return false;
       if (activeCategory !== "all") {
         const cat = (product.category || "").toLowerCase();
-        if (cat !== activeCategory && !product.name.toLowerCase().includes(activeCategory)) return false;
+        if (cat !== activeCategory) return false;
       }
       if (searchQuery.trim()) {
         const q = searchQuery.toLowerCase();
@@ -943,6 +734,12 @@ export default function DashboardPage() {
     });
 
   const customizableTemplates = products.filter(product => isTemplateProduct(product));
+
+  // Merge Supabase catalog products and locally saved custom studio designs
+  const allProductsForWishlist = [
+    ...products,
+    ...localProducts.filter(lp => !products.some(p => p.id === lp.id))
+  ];
 
   if (checkingAuth) {
     return (
@@ -971,7 +768,7 @@ export default function DashboardPage() {
           >
             <span className="text-base select-none">🔔</span>
             {notifications.filter(n => !n.read).length > 0 && (
-              <span className="absolute -top-1 -right-1 w-4 h-4 bg-indigo-600 text-white rounded-full text-[8px] font-extrabold flex items-center justify-center animate-pulse shadow-md">
+              <span className="absolute -top-1 -right-1 w-4 h-4 bg-indigo-600 text-white rounded-full text-sm font-extrabold flex items-center justify-center animate-pulse shadow-md">
                 {notifications.filter(n => !n.read).length}
               </span>
             )}
@@ -985,7 +782,7 @@ export default function DashboardPage() {
                 {notifications.some(n => !n.read) && (
                   <button
                     onClick={() => updateNotifications(notifications.map(n => ({ ...n, read: true })))}
-                    className="text-[9px] font-bold text-indigo-400 hover:text-indigo-300 transition-colors cursor-pointer"
+                    className="text-xs font-bold text-indigo-400 hover:text-indigo-300 transition-colors cursor-pointer"
                   >
                     Mark all read
                   </button>
@@ -993,7 +790,7 @@ export default function DashboardPage() {
               </div>
               <div className="max-h-64 overflow-y-auto divide-y divide-zinc-900/40">
                 {notifications.length === 0 ? (
-                  <div className="p-6 text-center text-[10px] text-zinc-600 font-medium select-none">
+                  <div className="p-6 text-center text-sm text-zinc-600 font-medium select-none">
                     No new notifications.
                   </div>
                 ) : (
@@ -1007,12 +804,12 @@ export default function DashboardPage() {
                       className={`p-3.5 transition-colors cursor-pointer hover:bg-zinc-900/20 text-left ${noti.read ? "opacity-60" : "bg-indigo-950/5"}`}
                     >
                       <div className="flex justify-between items-start gap-1">
-                        <h4 className={`text-[10px] font-extrabold ${noti.read ? "text-zinc-400" : "text-white"}`}>
+                        <h4 className={`text-sm font-extrabold ${noti.read ? "text-zinc-400" : "text-white"}`}>
                           {noti.title}
                         </h4>
                         <span className="text-[7px] text-zinc-500 font-mono shrink-0">{noti.time}</span>
                       </div>
-                      <p className="text-[9px] text-zinc-400 leading-relaxed font-medium mt-1">
+                      <p className="text-xs text-zinc-400 leading-relaxed font-medium mt-1">
                         {noti.message}
                       </p>
                     </div>
@@ -1027,92 +824,7 @@ export default function DashboardPage() {
       {/* Main Workspace */}
       <main className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 mt-12 z-10 relative">
         
-        {/* Modern Premium Hero banner */}
-        <section className="mb-14 text-center max-w-2xl mx-auto">
-          <div className="inline-flex items-center gap-1.5 bg-indigo-500/10 border border-indigo-500/20 text-indigo-400 text-[10px] font-bold px-3 py-1 rounded-full uppercase tracking-wider mb-6">
-            <Sparkles className="w-3 h-3 animate-spin" />
-            <span>Interactive 3D Apparel Lab</span>
-          </div>
-          
-          <h1 className="text-4xl sm:text-5xl font-extrabold tracking-tight bg-gradient-to-r from-zinc-50 via-zinc-100 to-zinc-400 bg-clip-text text-transparent leading-tight">
-            Design Your Own High-End Custom Apparel
-          </h1>
-          
-          <p className="text-sm sm:text-base text-zinc-400 mt-4 leading-relaxed max-w-xl mx-auto">
-            Choose a premium base garment from our designer canvas selection below, enter our real-time 3D studio, and custom-craft your own apparel in minutes.
-          </p>
-        </section>
 
-        {/* Primary View Switcher: Shop vs Tracking */}
-        <section className="mb-12 max-w-2xl mx-auto bg-zinc-900/60 border border-zinc-900 rounded-xl p-1 flex shadow-inner gap-1 flex-wrap sm:flex-nowrap">
-          <button
-            onClick={() => setActiveDashboardTab("shop")}
-            className={`flex-1 text-center py-2.5 rounded-lg text-[10px] sm:text-xs font-bold transition-all uppercase tracking-wider cursor-pointer flex items-center justify-center gap-1.5 ${
-              activeDashboardTab === "shop"
-                ? "bg-indigo-600 border-indigo-500 text-white shadow-lg shadow-indigo-600/10 font-extrabold"
-                : "text-zinc-500 hover:text-zinc-355"
-            }`}
-          >
-            <ShoppingBag className="w-3.5 h-3.5" />
-            <span className="hidden md:inline">Shop Catalog</span>
-            <span className="md:hidden">Shop</span>
-          </button>
-          
-          <button
-            onClick={() => setActiveDashboardTab("3d-design")}
-            className={`flex-1 text-center py-2.5 rounded-lg text-[10px] sm:text-xs font-bold transition-all uppercase tracking-wider cursor-pointer flex items-center justify-center gap-1.5 ${
-              activeDashboardTab === "3d-design"
-                ? "bg-indigo-600 border-indigo-500 text-white shadow-lg shadow-indigo-600/10 font-extrabold"
-                : "text-zinc-500 hover:text-zinc-355"
-            }`}
-          >
-            <Sparkles className="w-3.5 h-3.5 animate-pulse text-indigo-400" />
-            <span className="hidden md:inline">3D Studio</span>
-            <span className="md:hidden">Studio</span>
-          </button>
-
-          <button
-            onClick={() => {
-              setActiveDashboardTab("wishlist");
-              loadWishlist();
-            }}
-            className={`flex-1 text-center py-2.5 rounded-lg text-[10px] sm:text-xs font-bold transition-all uppercase tracking-wider cursor-pointer flex items-center justify-center gap-1.5 ${
-              activeDashboardTab === "wishlist"
-                ? "bg-indigo-600 border-indigo-500 text-white shadow-lg shadow-indigo-600/10 font-extrabold"
-                : "text-zinc-500 hover:text-zinc-355"
-            }`}
-          >
-            <Heart className="w-3.5 h-3.5" />
-            <span className="hidden md:inline">Saved Wishlist</span>
-            <span className="md:hidden">Wishlist</span>
-            {wishlist.length > 0 && (
-              <span className="bg-zinc-850 text-indigo-400 border border-indigo-500/20 text-[9px] font-bold px-1.5 py-0.5 rounded-full">
-                {wishlist.length}
-              </span>
-            )}
-          </button>
-
-          <button
-            onClick={() => {
-              setActiveDashboardTab("tracking");
-              fetchPastOrders();
-            }}
-            className={`flex-1 text-center py-2.5 rounded-lg text-[10px] sm:text-xs font-bold transition-all uppercase tracking-wider cursor-pointer flex items-center justify-center gap-1.5 ${
-              activeDashboardTab === "tracking"
-                ? "bg-indigo-600 border-indigo-500 text-white shadow-lg shadow-indigo-600/10 font-extrabold"
-                : "text-zinc-500 hover:text-zinc-355"
-            }`}
-          >
-            <Sparkles className="w-3.5 h-3.5" />
-            <span className="hidden md:inline">Track Orders</span>
-            <span className="md:hidden">Track</span>
-            {pastOrders.length > 0 && (
-              <span className="bg-zinc-850 text-indigo-400 border border-indigo-500/20 text-[9px] font-bold px-1.5 py-0.5 rounded-full">
-                {pastOrders.length}
-              </span>
-            )}
-          </button>
-        </section>
 
         {activeDashboardTab === "shop" ? (
           <>
@@ -1147,22 +859,29 @@ export default function DashboardPage() {
               </div>
 
               {/* Category pills */}
-              <div className="flex items-center gap-2 flex-wrap">
-                {categories.map((category) => (
-                  <button
-                    key={category}
-                    onClick={() => setActiveCategory(category)}
-                    className={`text-xs font-semibold px-4 py-1.5 rounded-full border transition-all uppercase tracking-wider cursor-pointer ${
-                      activeCategory === category
-                        ? "bg-indigo-600 border-indigo-500 text-white shadow-md shadow-indigo-600/10"
-                        : "bg-zinc-900/40 border-zinc-800/80 hover:border-zinc-700 text-zinc-500 hover:text-white hover:bg-zinc-900/60"
-                    }`}
-                  >
-                    {category === "all" ? "All" : category.charAt(0).toUpperCase() + category.slice(1) + "s"}
-                  </button>
-                ))}
+              <div className="flex items-center gap-2.5 flex-wrap justify-between">
+                <div className="bg-zinc-950/60 border border-zinc-900/80 p-1.5 rounded-2xl flex items-center shadow-inner gap-1 overflow-x-auto whitespace-nowrap">
+                  {categories.map((category) => {
+                    const isActive = activeCategory === category;
+                    const { label, icon } = getCatMeta(category);
+                    return (
+                      <button
+                        key={category}
+                        onClick={() => setActiveCategory(category)}
+                        className={`px-5 py-2.5 rounded-xl text-sm sm:text-xs font-black uppercase tracking-wider transition-all cursor-pointer flex items-center justify-center gap-2 select-none ${
+                          isActive
+                            ? "bg-indigo-600 border-indigo-500 text-white shadow-lg shadow-indigo-600/20 font-black"
+                            : "text-zinc-500 hover:text-zinc-300 font-bold border-transparent bg-transparent"
+                        }`}
+                      >
+                        {icon}
+                        <span>{label}</span>
+                      </button>
+                    );
+                  })}
+                </div>
                 {(searchQuery || activeCategory !== "all") && (
-                  <span className="text-[10px] text-zinc-500 font-medium ml-1">{filteredProducts.length} result{filteredProducts.length !== 1 ? 's' : ''}</span>
+                  <span className="text-sm text-zinc-500 font-medium bg-zinc-900/40 border border-zinc-800/60 px-3 py-1.5 rounded-xl ml-auto">{filteredProducts.length} result{filteredProducts.length !== 1 ? 's' : ''}</span>
                 )}
               </div>
             </section>
@@ -1186,7 +905,36 @@ export default function DashboardPage() {
                 </div>
               ) : (
                 <div className="grid grid-cols-2 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-5 animate-fade-in">
-                  {filteredProducts.map((product) => {
+                  {(() => {
+                    const gridItems = [...filteredProducts];
+                    if (gridItems.length > 0) {
+                      const insertIndex = Math.min(8, gridItems.length);
+                      gridItems.splice(insertIndex, 0, { id: 'ad_card_3d', isAd: true });
+                    }
+                    return gridItems;
+                  })().map((item) => {
+                    if (item.isAd) {
+                      return (
+                        <div 
+                          key="ad_card_3d" 
+                          onClick={() => router.push('/studio')}
+                          className="col-span-full my-4 bg-gradient-to-r from-indigo-900/40 via-purple-900/30 to-indigo-900/40 border border-indigo-500/30 rounded-2xl p-8 sm:p-12 flex flex-col items-center justify-center text-center cursor-pointer hover:border-indigo-500/60 transition-all hover:shadow-xl hover:shadow-indigo-500/20 group relative overflow-hidden"
+                        >
+                          <div className="absolute inset-0 bg-indigo-500/5 group-hover:bg-indigo-500/10 transition-colors pointer-events-none" />
+                          <div className="inline-flex items-center gap-1.5 bg-indigo-500/20 border border-indigo-500/30 text-indigo-300 text-sm font-bold px-3 py-1 rounded-full uppercase tracking-wider mb-4 relative z-10">
+                            <Sparkles className="w-3 h-3 animate-spin" />
+                            <span>Interactive 3D Apparel Lab</span>
+                          </div>
+                          <h2 className="text-balance text-2xl sm:text-4xl font-extrabold tracking-tight text-white mb-3 relative z-10">Design Your Own High-End Custom Apparel</h2>
+                          <p className="text-balance text-xs sm:text-sm text-indigo-200 mb-6 max-w-xl relative z-10">Choose a premium base garment, enter our real-time 3D studio, and custom-craft your own apparel in minutes.</p>
+                          <button className="bg-indigo-600 group-hover:bg-indigo-500 text-white font-bold py-2.5 px-6 rounded-xl transition-colors text-xs uppercase tracking-wider flex items-center gap-2 relative z-10 shadow-lg shadow-indigo-600/30">
+                            Enter Studio <ArrowRight className="w-4 h-4 group-hover:translate-x-1 transition-transform" />
+                          </button>
+                        </div>
+                      );
+                    }
+                    
+                    const product = item;
                     const galleryImages = product.gallery_urls
                       ? (product.gallery_urls.startsWith("data:image")
                           ? [product.gallery_urls]
@@ -1223,21 +971,30 @@ export default function DashboardPage() {
                           )}
                           {/* Category badge */}
                           {product.category && (
-                            <div className="absolute top-2 left-2 bg-zinc-950/80 border border-zinc-800 text-[9px] text-zinc-400 font-bold px-2 py-0.5 rounded-full uppercase tracking-wider backdrop-blur-sm">
+                            <div className="absolute top-2 left-2 bg-zinc-950/80 border border-zinc-800 text-xs text-zinc-400 font-bold px-2 py-0.5 rounded-full uppercase tracking-wider backdrop-blur-sm">
                               {product.category}
                             </div>
                           )}
                           {/* Multiple photos indicator */}
                           {galleryImages.length > 0 && (
-                            <div className="absolute top-2 right-2 bg-zinc-950/80 border border-zinc-800 text-[9px] text-zinc-400 font-bold px-2 py-0.5 rounded-full backdrop-blur-sm">
+                            <div className="absolute top-2 right-2 bg-zinc-950/80 border border-zinc-800 text-xs text-zinc-400 font-bold px-2 py-0.5 rounded-full backdrop-blur-sm">
                               {galleryImages.length + 1} photos
                             </div>
                           )}
+                          
+                          {/* Wishlist Heart Overlay */}
+                          <button
+                            onClick={(e) => handleToggleWishlist(product, e)}
+                            className="absolute top-2 left-2 p-1.5 rounded-full bg-zinc-950/60 backdrop-blur-sm border border-zinc-800/50 text-zinc-400 hover:text-rose-400 hover:border-rose-400/50 transition-colors z-10"
+                          >
+                            <Heart className={`w-4 h-4 ${wishlist.includes(product.id) ? "fill-rose-500 text-rose-500" : ""}`} />
+                          </button>
+
                           {/* Quick add overlay on hover */}
                           <div className={`absolute inset-x-0 bottom-0 p-3 bg-gradient-to-t from-zinc-950 to-transparent transition-opacity duration-200 ${isHovered ? "opacity-100" : "opacity-0"}`}>
                             <button
                               onClick={(e) => { e.stopPropagation(); handleAddCatalogToCart(product); }}
-                              className="w-full py-2 bg-indigo-600 hover:bg-indigo-500 text-white text-[10px] font-bold rounded-xl flex items-center justify-center gap-1.5 transition-colors cursor-pointer"
+                              className="w-full py-2 bg-indigo-600 hover:bg-indigo-500 text-white text-sm font-bold rounded-xl flex items-center justify-center gap-1.5 transition-colors cursor-pointer"
                             >
                               <CartIcon className="w-3 h-3" />
                               Quick Add
@@ -1254,12 +1011,12 @@ export default function DashboardPage() {
                             <span className="text-sm font-black text-indigo-400">
                               ₹{product.price ? product.price.toLocaleString('en-IN') : "3,999"}
                             </span>
-                            <span className="text-[9px] text-emerald-500 font-bold">Free Ship</span>
+                            <span className="text-xs text-emerald-500 font-bold">Free Ship</span>
                           </div>
                           <Link
                             href={`/product/${product.id}`}
                             onClick={(e) => e.stopPropagation()}
-                            className="w-full py-2 bg-zinc-800/60 hover:bg-zinc-800 border border-zinc-700/40 hover:border-zinc-600 text-zinc-300 hover:text-white rounded-xl text-[10px] font-bold text-center transition-all"
+                            className="w-full py-2 bg-zinc-800/60 hover:bg-zinc-800 border border-zinc-700/40 hover:border-zinc-600 text-zinc-300 hover:text-white rounded-xl text-sm font-bold text-center transition-all"
                           >
                             View Details
                           </Link>
@@ -1281,7 +1038,7 @@ export default function DashboardPage() {
                 <Sparkles className="w-4 h-4 text-indigo-400 animate-pulse" />
                 <span>Preload Custom Design Graphics</span>
               </h3>
-              <p className="text-[11px] text-zinc-500 mb-5 leading-relaxed">
+              <p className="text-sm text-zinc-500 mb-5 leading-relaxed">
                 (Optional) Select a transparent PNG decal or logo from your device first. It will be preloaded on the 3D customizer canvas automatically when you open a blank template!
               </p>
 
@@ -1325,7 +1082,7 @@ export default function DashboardPage() {
                           e.preventDefault();
                           setPreloadedDecalDataUrl(null);
                         }}
-                        className="text-[10px] text-rose-400 hover:text-rose-350 mt-1 select-none font-bold underline underline-offset-2 cursor-pointer"
+                        className="text-sm text-rose-400 hover:text-rose-350 mt-1 select-none font-bold underline underline-offset-2 cursor-pointer"
                       >
                         Remove Decal
                       </button>
@@ -1335,7 +1092,7 @@ export default function DashboardPage() {
                   <div className="flex flex-col items-center justify-center py-2 text-center text-zinc-400 select-none">
                     <span className="text-2xl mb-1.5">🖼️</span>
                     <p className="text-xs font-bold">Click to select graphic</p>
-                    <p className="text-[10px] text-zinc-650 mt-1">Supports PNG, JPG transparent stickers</p>
+                    <p className="text-sm text-zinc-650 mt-1">Supports PNG, JPG transparent stickers</p>
                   </div>
                 )}
               </div>
@@ -1348,7 +1105,7 @@ export default function DashboardPage() {
                   <Layers className="w-4 h-4 text-indigo-400" />
                   <span>Choose Customizable Blanks ({customizableTemplates.length})</span>
                 </h3>
-                <p className="text-[10px] text-zinc-500 mt-1">Select a template canvas model mesh below to enter the 3D customizer.</p>
+                <p className="text-sm text-zinc-500 mt-1">Select a template canvas model mesh below to enter the 3D customizer.</p>
               </div>
 
               {loadingProducts ? (
@@ -1380,7 +1137,7 @@ export default function DashboardPage() {
                             }}
                           />
                           <div className="absolute inset-0 bg-gradient-to-t from-zinc-950 via-transparent to-transparent opacity-0 group-hover:opacity-100 transition-opacity flex items-end p-4">
-                            <span className="text-[9px] bg-indigo-600/95 text-white px-2 py-0.5 rounded font-mono uppercase font-extrabold animate-pulse">
+                            <span className="text-xs bg-indigo-600/95 text-white px-2 py-0.5 rounded font-mono uppercase font-extrabold animate-pulse">
                               Designable Canvas
                             </span>
                           </div>
@@ -1427,12 +1184,12 @@ export default function DashboardPage() {
             <div className="border-b border-zinc-900 pb-3 select-none">
               <h3 className="text-xs font-bold text-zinc-400 uppercase tracking-widest flex items-center gap-2">
                 <Heart className="w-4 h-4 text-rose-450" />
-                <span>My Saved Wishlist ({products.filter(p => wishlist.includes(p.id)).length})</span>
+                <span>My Saved Wishlist ({allProductsForWishlist.filter(p => wishlist.includes(p.id)).length})</span>
               </h3>
-              <p className="text-[10px] text-zinc-500 mt-1">Review your saved items, move them directly to your shopping bag, or view full detail metrics.</p>
+              <p className="text-sm text-zinc-500 mt-1">Review your saved items, move them directly to your shopping bag, or view full detail metrics.</p>
             </div>
 
-            {products.filter(p => wishlist.includes(p.id)).length === 0 ? (
+            {allProductsForWishlist.filter(p => wishlist.includes(p.id)).length === 0 ? (
               <div className="py-24 text-center border border-dashed border-zinc-850 rounded-2xl bg-zinc-900/10 max-w-xl mx-auto">
                 <Heart className="w-12 h-12 mx-auto text-zinc-800 mb-4 animate-pulse" />
                 <p className="text-sm font-semibold text-zinc-500">Your saved wishlist is empty.</p>
@@ -1446,7 +1203,7 @@ export default function DashboardPage() {
               </div>
             ) : (
               <div className="grid grid-cols-2 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-5 animate-fade-in">
-                {products.filter(p => wishlist.includes(p.id)).map((product) => (
+                {allProductsForWishlist.filter(p => wishlist.includes(p.id)).map((product) => (
                   <div 
                     key={product.id}
                     className="bg-zinc-900/25 border border-zinc-900/80 hover:border-zinc-700 rounded-2xl overflow-hidden transition-all flex flex-col group shadow-sm hover:shadow-xl hover:shadow-zinc-950/60"
@@ -1471,20 +1228,20 @@ export default function DashboardPage() {
                       <h3 className="font-bold text-xs text-zinc-200 line-clamp-1 leading-snug pr-6 transition-colors group-hover:text-white" onClick={() => router.push(`/product/${product.id}`)}>{product.name}</h3>
                       <div className="flex items-center justify-between pt-1">
                         <span className="text-xs font-black text-indigo-400">₹{product.price ? product.price.toLocaleString('en-IN') : "3,999"}</span>
-                        <span className="text-[9px] text-zinc-500">{product.category || "Apparel"}</span>
+                        <span className="text-xs text-zinc-500">{product.category || "Apparel"}</span>
                       </div>
                       
                       <div className="grid grid-cols-2 gap-2 mt-4 pt-2 border-t border-zinc-900/40">
                         <button
                           onClick={() => handleAddWishlistToCart(product)}
-                          className="py-2 bg-indigo-600 hover:bg-indigo-500 text-white rounded-xl text-[10px] font-bold text-center transition-all cursor-pointer flex items-center justify-center gap-1"
+                          className="py-2 bg-indigo-600 hover:bg-indigo-500 text-white rounded-xl text-sm font-bold text-center transition-all cursor-pointer flex items-center justify-center gap-1"
                         >
                           <ShoppingBag className="w-3 h-3" />
                           <span>Move to Bag</span>
                         </button>
                         <button
                           onClick={() => router.push(`/product/${product.id}`)}
-                          className="py-2 bg-zinc-800 hover:bg-zinc-750 border border-zinc-700/40 hover:border-zinc-650 text-zinc-355 hover:text-white rounded-xl text-[10px] font-bold text-center transition-all cursor-pointer"
+                          className="py-2 bg-zinc-800 hover:bg-zinc-750 border border-zinc-700/40 hover:border-zinc-650 text-zinc-355 hover:text-white rounded-xl text-sm font-bold text-center transition-all cursor-pointer"
                         >
                           View Details
                         </button>
@@ -1506,7 +1263,7 @@ export default function DashboardPage() {
               <button
                 onClick={fetchPastOrders}
                 disabled={loadingPastOrders}
-                className="text-[10px] bg-zinc-900 hover:bg-zinc-800 border border-zinc-800 text-zinc-300 font-bold px-3 py-1.5 rounded-lg transition-colors cursor-pointer flex items-center gap-1"
+                className="text-sm bg-zinc-900 hover:bg-zinc-800 border border-zinc-800 text-zinc-300 font-bold px-3 py-1.5 rounded-lg transition-colors cursor-pointer flex items-center gap-1"
               >
                 {loadingPastOrders ? (
                   <>
@@ -1527,7 +1284,7 @@ export default function DashboardPage() {
             ) : pastOrders.length === 0 ? (
               <div className="py-24 text-center border border-dashed border-zinc-850 rounded-2xl bg-zinc-900/10 max-w-xl mx-auto">
                 <ShoppingBag className="w-12 h-12 mx-auto text-zinc-800 mb-4 animate-pulse" />
-                <p className="text-sm font-semibold text-zinc-500">You haven't customized any apparel yet.</p>
+                <p className="text-sm font-semibold text-zinc-500">You haven&apos;t customized any apparel yet.</p>
                 <p className="text-xs text-zinc-600 mt-1.5 leading-relaxed">Create your own 3D custom apparel, complete the checkout, and start tracking your shipment live!</p>
                 <button
                   onClick={() => setActiveDashboardTab("shop")}
@@ -1567,18 +1324,18 @@ export default function DashboardPage() {
                             <span className="text-xs font-mono font-bold text-zinc-300 bg-zinc-950 border border-zinc-850 px-2 py-0.5 rounded select-all">
                               {order.id}
                             </span>
-                            <span className="text-[10px] text-zinc-500 font-semibold select-none">
+                            <span className="text-sm text-zinc-500 font-semibold select-none">
                               Placed on: {new Date(order.created_at).toLocaleDateString()}
                             </span>
                           </div>
-                          <p className="text-[11px] text-zinc-400 mt-2 font-medium">
+                          <p className="text-sm text-zinc-400 mt-2 font-medium">
                             Shipping to: <strong className="text-zinc-200">{order.customer_name}</strong>
                           </p>
                         </div>
 
                         <div className="flex items-center gap-4">
                           <div className="text-right">
-                            <p className="text-[9px] text-zinc-500 font-bold uppercase tracking-wider select-none">Total Charged</p>
+                            <p className="text-xs text-zinc-500 font-bold uppercase tracking-wider select-none">Total Charged</p>
                             <p className="font-mono text-emerald-400 font-extrabold text-sm">₹{order.total_amount ? order.total_amount.toLocaleString('en-IN') : "0"}</p>
                           </div>
                         </div>
@@ -1602,22 +1359,22 @@ export default function DashboardPage() {
                             return (
                               <div key={step.key} className="flex flex-col items-center z-10 relative">
                                 <div 
-                                  className={`w-7 h-7 sm:w-8 sm:h-8 rounded-full flex items-center justify-center border-2 font-bold text-[10px] transition-all duration-300 ${
+                                  className={`w-7 h-7 sm:w-8 sm:h-8 rounded-full flex items-center justify-center border-2 font-bold text-sm transition-all duration-300 ${
                                     isCompleted 
                                       ? "bg-indigo-600 border-indigo-500 text-white shadow-lg shadow-indigo-500/20 scale-110" 
                                       : "bg-zinc-950 border-zinc-800 text-zinc-500"
                                   } ${isActive ? "ring-4 ring-indigo-500/10" : ""}`}
                                 >
                                   {isCompleted && !isActive ? (
-                                    <span className="text-[9px] font-extrabold">✓</span>
+                                    <span className="text-xs font-extrabold">✓</span>
                                   ) : (
                                     <span>{idx + 1}</span>
                                   )}
                                 </div>
-                                <span className={`text-[10px] sm:text-[11px] font-extrabold mt-2 tracking-tight ${isCompleted ? "text-indigo-400" : "text-zinc-500"}`}>
+                                <span className={`text-sm sm:text-sm font-extrabold mt-2 tracking-tight ${isCompleted ? "text-indigo-400" : "text-zinc-500"}`}>
                                   {step.label}
                                 </span>
-                                <span className="text-[8px] sm:text-[9px] text-zinc-600 mt-0.5 hidden sm:inline select-none">
+                                <span className="text-sm sm:text-xs text-zinc-600 mt-0.5 hidden sm:inline select-none">
                                   {step.desc}
                                 </span>
                               </div>
@@ -1629,7 +1386,7 @@ export default function DashboardPage() {
                       {/* Ordered items preview */}
                       <div className="grid grid-cols-1 md:grid-cols-2 gap-4 pt-2">
                         <div className="space-y-2.5">
-                          <h5 className="text-[9px] font-extrabold text-zinc-500 uppercase tracking-widest select-none border-b border-zinc-900 pb-1">Custom Designs</h5>
+                          <h5 className="text-xs font-extrabold text-zinc-500 uppercase tracking-widest select-none border-b border-zinc-900 pb-1">Custom Designs</h5>
                           {(order.items || []).map((item, idx) => (
                             <div key={idx} className="bg-zinc-950/40 border border-zinc-900 rounded-xl p-3 flex gap-3.5 items-center">
                               <div className="w-12 h-12 bg-zinc-900 border border-zinc-850 rounded-lg overflow-hidden shrink-0 relative flex items-center justify-center">
@@ -1644,7 +1401,7 @@ export default function DashboardPage() {
                               </div>
                               <div className="flex-1 min-w-0">
                                 <h6 className="text-xs font-bold text-white truncate">{item.name}</h6>
-                                <p className="text-[10px] text-zinc-500 font-semibold mt-0.5">Qty: {item.quantity} | Customized Base</p>
+                                <p className="text-sm text-zinc-500 font-semibold mt-0.5">Qty: {item.quantity} | Customized Base</p>
                               </div>
                               <span className="text-xs font-mono font-bold text-indigo-400 shrink-0">
                                 ₹{((item.price || 3999) * item.quantity).toLocaleString('en-IN')}
@@ -1656,12 +1413,12 @@ export default function DashboardPage() {
                         {/* Shipment card & details */}
                         <div className="bg-zinc-950/20 border border-zinc-900 rounded-2xl p-4 flex flex-col justify-between min-h-[120px]">
                           <div className="space-y-2">
-                            <h5 className="text-[9px] font-extrabold text-zinc-500 uppercase tracking-widest select-none border-b border-zinc-900 pb-1">Delivery Details</h5>
+                            <h5 className="text-xs font-extrabold text-zinc-500 uppercase tracking-widest select-none border-b border-zinc-900 pb-1">Delivery Details</h5>
                             
                             {/* Real Date/Time Estimated Delivery */}
                             <div className="mb-2.5 bg-indigo-950/10 border border-indigo-900/10 rounded-lg p-2.5 flex items-center gap-2.5 text-indigo-400 select-none">
                               <span className="text-xs">📅</span>
-                              <div className="text-[9px] font-semibold leading-relaxed">
+                              <div className="text-xs font-semibold leading-relaxed">
                                 {(() => {
                                   const orderDate = new Date(order.created_at);
                                   if (isNaN(orderDate.getTime())) return "Estimated: 7-10 Business Days";
@@ -1691,7 +1448,7 @@ export default function DashboardPage() {
                                 <p className="font-semibold">Tracking ID: <span className="text-indigo-400 font-mono select-all font-bold">{order.tracking_number}</span></p>
                               </div>
                             ) : (
-                              <p className="text-[10px] text-zinc-500 leading-relaxed font-medium">
+                              <p className="text-sm text-zinc-500 leading-relaxed font-medium">
                                 Your physical garment design is being compiled for high-resolution print matching. Tracking details will post here as soon as shipment dispatches!
                               </p>
                             )}
@@ -1708,7 +1465,7 @@ export default function DashboardPage() {
                                   else if (order.status === "shipped") baseStep = 3;
                                   setActiveShipmentCheckpointStep(baseStep);
                                 }}
-                                className="w-full bg-indigo-600/10 hover:bg-indigo-600 border border-indigo-500/20 hover:border-indigo-500 hover:text-white text-indigo-400 text-[10px] font-bold uppercase tracking-wider py-2 rounded-xl transition-all shadow-md cursor-pointer text-center"
+                                className="w-full bg-indigo-600/10 hover:bg-indigo-600 border border-indigo-500/20 hover:border-indigo-500 hover:text-white text-indigo-400 text-sm font-bold uppercase tracking-wider py-2 rounded-xl transition-all shadow-md cursor-pointer text-center"
                               >
                                 Track Package Journey Live
                               </button>
@@ -1717,7 +1474,7 @@ export default function DashboardPage() {
                             {/* Download PDF Invoice trigger */}
                             <button
                               onClick={() => handleDownloadInvoice(order)}
-                              className="w-full bg-zinc-800 hover:bg-zinc-700 border border-zinc-700 text-zinc-300 text-[10px] font-bold uppercase tracking-wider py-2 rounded-xl transition-all shadow-md cursor-pointer text-center flex items-center justify-center gap-1.5"
+                              className="w-full bg-zinc-800 hover:bg-zinc-700 border border-zinc-700 text-zinc-300 text-sm font-bold uppercase tracking-wider py-2 rounded-xl transition-all shadow-md cursor-pointer text-center flex items-center justify-center gap-1.5"
                             >
                               <span>📄</span> Download Invoice PDF
                             </button>
@@ -1726,12 +1483,12 @@ export default function DashboardPage() {
                             {(!order.status || ["pending", "payment_pending", "processing"].includes(order.status.toLowerCase())) ? (
                               <button
                                 onClick={() => handleCancelOrder(order.id)}
-                                className="w-full bg-red-500/10 hover:bg-red-600 border border-red-500/20 hover:border-red-500 hover:text-white text-red-400 text-[9px] font-bold uppercase tracking-wider py-2 rounded-lg transition-all cursor-pointer text-center"
+                                className="w-full bg-red-500/10 hover:bg-red-600 border border-red-500/20 hover:border-red-500 hover:text-white text-red-400 text-xs font-bold uppercase tracking-wider py-2 rounded-lg transition-all cursor-pointer text-center"
                               >
                                 Cancel Order
                               </button>
                             ) : (
-                              <div className="text-center py-1.5 bg-zinc-950/40 border border-zinc-900 rounded-lg text-[8px] text-zinc-500 font-bold uppercase tracking-wider select-none">
+                              <div className="text-center py-1.5 bg-zinc-950/40 border border-zinc-900 rounded-lg text-sm text-zinc-500 font-bold uppercase tracking-wider select-none">
                                 🔒 Production Locked: In fabrication
                               </div>
                             )}
@@ -1748,623 +1505,6 @@ export default function DashboardPage() {
         )}
       </main>
 
-      {/* Modern Slide-out Shopping Cart Drawer */}
-      {isCartOpen && (
-        <div className="fixed inset-0 z-50 overflow-hidden">
-          {/* Backdrop */}
-          <div 
-            onClick={() => setIsCartOpen(false)}
-            className="absolute inset-0 bg-black/60 backdrop-blur-sm transition-opacity" 
-          />
-
-          <div className="absolute inset-y-0 right-0 max-w-md w-full flex">
-            {/* Drawer Content */}
-            <div className="w-full bg-zinc-950 border-l border-zinc-900 flex flex-col justify-between shadow-2xl relative">
-              
-              {/* Checkout success modal */}
-              {checkoutSuccess && (
-                <div className="absolute inset-0 bg-zinc-950/90 backdrop-blur-md z-50 flex flex-col items-center justify-center p-6 text-center">
-                  <div className="w-14 h-14 bg-emerald-500/10 border border-emerald-500/20 text-emerald-400 rounded-full flex items-center justify-center mb-4">
-                    <CheckCircle className="w-8 h-8 animate-pulse" />
-                  </div>
-                  <h3 className="text-xl font-bold text-white">Order Placed Successfully!</h3>
-                  <p className="text-xs text-zinc-400 mt-2 max-w-xs leading-relaxed">
-                    Thank you! Your high-fidelity customized design has been sent to our manufacturing print facility. We'll update you as soon as it ships!
-                  </p>
-                </div>
-              )}
-
-              {/* Drawer Header */}
-              <div className="p-5 border-b border-zinc-900 flex items-center justify-between bg-zinc-950/20 sticky top-0 z-10 backdrop-blur-md">
-                <div className="flex items-center gap-2">
-                  <ShoppingBag className="w-5 h-5 text-indigo-400" />
-                  <h2 className="font-extrabold text-base">
-                    {isCheckingOut ? "Secure Checkout" : "Custom Shopping Cart"}
-                  </h2>
-                  <span className="text-[10px] bg-zinc-900 border border-zinc-800 text-zinc-500 px-2 py-0.5 rounded font-mono">
-                    {totalItems} items
-                  </span>
-                </div>
-                <button 
-                  onClick={() => setIsCartOpen(false)}
-                  className="p-1.5 hover:bg-zinc-900 rounded-lg text-zinc-500 hover:text-white transition-colors cursor-pointer"
-                >
-                  <X className="w-4 h-4" />
-                </button>
-              </div>
-
-              {/* Drawer List or Checkout Form */}
-              <div className="flex-1 overflow-y-auto p-5 space-y-4">
-                {cart.length === 0 && !checkoutSuccess ? (
-                  <div className="h-full flex flex-col items-center justify-center text-center text-zinc-500 py-12">
-                    <CartIcon className="w-12 h-12 text-zinc-800 mb-3" />
-                    <p className="text-sm font-semibold text-zinc-400">Your shopping cart is empty.</p>
-                    <p className="text-xs text-zinc-600 mt-1 max-w-[200px] mx-auto">
-                      Go to the studio page and click "Add to Cart" to capture your customized garments!
-                    </p>
-                  </div>
-                ) : isCheckingOut ? (
-                  /* Checkout Shipping Address Form */
-                  <form onSubmit={handlePlaceOrder} className="space-y-4">
-                    <div className="border-b border-zinc-900 pb-3 mb-4">
-                      <h3 className="text-sm font-bold text-zinc-300 uppercase tracking-wider">Shipping Details</h3>
-                      <p className="text-[10px] text-zinc-500 mt-0.5">Please provide delivery address details for your order.</p>
-                    </div>
-
-                    <div>
-                      <label className="block text-[10px] font-semibold text-zinc-400 uppercase tracking-wider mb-2">
-                        Recipient Name
-                      </label>
-                      <input
-                        type="text"
-                        required
-                        value={customerName}
-                        onChange={(e) => setCustomerName(e.target.value)}
-                        placeholder="Enter recipient name"
-                        className="w-full bg-zinc-900/60 border border-zinc-800 rounded-lg px-3.5 py-2 text-xs text-white placeholder-zinc-600 focus:outline-none focus:border-indigo-500"
-                      />
-                    </div>
-
-                    <div>
-                      <label className="block text-[10px] font-semibold text-zinc-400 uppercase tracking-wider mb-2">
-                        Contact Phone
-                      </label>
-                      <input
-                        type="tel"
-                        required
-                        value={customerPhone}
-                        onChange={(e) => setCustomerPhone(e.target.value)}
-                        placeholder="Enter 10-digit mobile number"
-                        className="w-full bg-zinc-900/60 border border-zinc-800 rounded-lg px-3.5 py-2 text-xs text-white placeholder-zinc-600 focus:outline-none focus:border-indigo-500"
-                      />
-                    </div>
-
-                    <div className="relative">
-                      <label className="block text-[10px] font-semibold text-zinc-400 uppercase tracking-wider mb-2">
-                        Street Address
-                      </label>
-                      <input
-                        type="text"
-                        required
-                        value={customerAddress}
-                        onChange={(e) => setCustomerAddress(e.target.value)}
-                        placeholder="Enter street address"
-                        className="w-full bg-zinc-900/60 border border-zinc-800 rounded-lg px-3.5 py-2 text-xs text-white placeholder-zinc-600 focus:outline-none focus:border-indigo-500"
-                      />
-                    </div>
-
-                    <div className="grid grid-cols-2 gap-4">
-                      <div>
-                        <label className="block text-[10px] font-semibold text-zinc-400 uppercase tracking-wider mb-2">
-                          City / Region
-                        </label>
-                        <input
-                          type="text"
-                          required
-                          value={customerCity}
-                          onChange={(e) => setCustomerCity(e.target.value)}
-                          placeholder="e.g. New York"
-                          className="w-full bg-zinc-900/60 border border-zinc-800 rounded-lg px-3.5 py-2 text-xs text-white placeholder-zinc-600 focus:outline-none focus:border-indigo-500"
-                        />
-                      </div>
-                      <div>
-                        <label className="block text-[10px] font-semibold text-zinc-400 uppercase tracking-wider mb-2">
-                          Postal / ZIP Code
-                        </label>
-                        <input
-                          type="text"
-                          required
-                          value={customerZip}
-                          onChange={(e) => setCustomerZip(e.target.value)}
-                          placeholder="e.g. 10001"
-                          className="w-full bg-zinc-900/60 border border-zinc-800 rounded-lg px-3.5 py-2 text-xs text-white placeholder-zinc-600 focus:outline-none focus:border-indigo-500"
-                        />
-                      </div>
-                    </div>
-
-                    <div className="pt-4 space-y-2">
-                      <button
-                        type="submit"
-                        disabled={isSubmittingOrder}
-                        className="w-full bg-gradient-to-r from-indigo-500 to-purple-600 hover:from-indigo-600 hover:to-purple-700 text-white font-bold text-xs py-2.5 px-4 rounded-xl shadow-lg flex items-center justify-center gap-2 cursor-pointer disabled:opacity-50"
-                      >
-                        {isSubmittingOrder ? (
-                          <>
-                            <Loader2 className="w-3.5 h-3.5 animate-spin" />
-                            <span>Securing order...</span>
-                          </>
-                        ) : (
-                          <>
-                            <span>Confirm Order & Pay (₹${subtotal.toLocaleString('en-IN')})</span>
-                            <ArrowRight className="w-3.5 h-3.5" />
-                          </>
-                        )}
-                      </button>
-
-                      <button
-                        type="button"
-                        onClick={() => setIsCheckingOut(false)}
-                        className="w-full bg-zinc-900 hover:bg-zinc-850 border border-zinc-800 text-zinc-400 hover:text-white text-xs font-semibold py-2.5 px-4 rounded-xl transition-colors cursor-pointer"
-                      >
-                        Back to Shopping Cart
-                      </button>
-                    </div>
-                  </form>
-                ) : (
-                  /* Original Cart list */
-                  cart.map((item) => (
-                    <div 
-                      key={item.id} 
-                      className="bg-zinc-900/40 border border-zinc-900/80 rounded-xl p-4 flex gap-4 items-start relative group"
-                    >
-                      {/* Customized Image Preview */}
-                      <div className="w-20 h-20 bg-zinc-950 border border-zinc-850 rounded-lg overflow-hidden shrink-0 flex items-center justify-center relative">
-                        <img 
-                          src={item.thumbnailUrl || item.customDesignUrl} 
-                          alt={item.name} 
-                          className="w-full h-full object-cover" 
-                        />
-                        <div className="absolute top-0.5 left-0.5 bg-indigo-600 text-white text-[8px] font-extrabold px-1 rounded uppercase tracking-tighter">
-                          Custom
-                        </div>
-                      </div>
-
-                      {/* Item Specs & Controls */}
-                      <div className="flex-1 min-w-0">
-                        <h4 className="font-extrabold text-sm text-zinc-200 truncate pr-6">
-                          {item.name}
-                        </h4>
-                        
-                        {/* Size Picker Selector */}
-                        <div className="flex items-center justify-between mt-2">
-                          <div className="flex items-center gap-1.5">
-                            <span className="text-[10px] text-zinc-500 font-semibold uppercase">Size:</span>
-                            <div className="flex gap-1">
-                              {["S", "M", "L", "XL"].map((s) => (
-                                <button
-                                  key={s}
-                                  onClick={() => updateSize(item.id, s)}
-                                  className={`text-[9px] font-bold w-5 h-5 border rounded flex items-center justify-center transition-all cursor-pointer ${
-                                    item.size === s
-                                      ? "bg-indigo-600 border-indigo-500 text-white"
-                                      : "bg-zinc-950 border-zinc-850 text-zinc-500 hover:text-white"
-                                  }`}
-                                >
-                                  {s}
-                                </button>
-                              ))}
-                            </div>
-                          </div>
-                          <button
-                            onClick={() => setShowSizeGuide(true)}
-                            className="text-[9px] font-bold text-indigo-400 hover:text-indigo-300 transition-colors cursor-pointer"
-                          >
-                            Size Guide
-                          </button>
-                        </div>
-
-                        {/* Quantity controls & Price */}
-                        <div className="flex items-center justify-between mt-3.5 border-t border-zinc-900/50 pt-2.5">
-                          <div className="flex items-center gap-2 bg-zinc-950 border border-zinc-850 px-2 py-0.5 rounded-lg">
-                            <button 
-                              onClick={() => updateQuantity(item.id, -1)}
-                              className="p-0.5 hover:bg-zinc-900 rounded text-zinc-500 hover:text-white transition-colors cursor-pointer"
-                            >
-                              <Minus className="w-3 h-3" />
-                            </button>
-                            <span className="text-xs font-mono font-bold text-zinc-300 w-4 text-center select-none">
-                              {item.quantity}
-                            </span>
-                            <button 
-                              onClick={() => updateQuantity(item.id, 1)}
-                              className="p-0.5 hover:bg-zinc-900 rounded text-zinc-500 hover:text-white transition-colors cursor-pointer"
-                            >
-                              <Plus className="w-3 h-3" />
-                            </button>
-                          </div>
-
-                          <span className="text-xs font-extrabold text-indigo-400 font-mono">
-                            ₹{((item.price || 3999) * item.quantity).toLocaleString('en-IN')}
-                          </span>
-                        </div>
-                      </div>
-
-                      {/* Trash Delete button */}
-                      <button
-                        onClick={() => removeCartItem(item.id)}
-                        className="absolute top-3 right-3 p-1 bg-zinc-950/80 hover:bg-red-500/10 border border-zinc-900 hover:border-red-500/20 text-zinc-600 hover:text-red-400 rounded-md transition-colors cursor-pointer"
-                        title="Remove item"
-                      >
-                        <Trash2 className="w-3.5 h-3.5" />
-                      </button>
-
-                    </div>
-                  ))
-                )}
-              </div>
-
-              {/* Drawer Footer (Summary & Checkout) */}
-              {cart.length > 0 && !isCheckingOut && (
-                <div className="p-5 border-t border-zinc-900 bg-zinc-950/30 backdrop-blur-md space-y-4">
-                  {/* Dynamic Promo Code Discount Box */}
-                  <div className="bg-zinc-900/50 border border-zinc-800 rounded-xl p-3 space-y-2">
-                    <span className="text-[10px] text-zinc-500 font-bold uppercase tracking-wider block">
-                      Promotional Discount Coupon
-                    </span>
-                    <form onSubmit={handleApplyCoupon} className="flex gap-2">
-                      <input
-                        type="text"
-                        placeholder="e.g. THREAD3D, SAAS20"
-                        value={couponCode}
-                        onChange={(e) => setCouponCode(e.target.value)}
-                        className="bg-zinc-950 border border-zinc-850 px-3 py-1.5 rounded-lg text-xs font-mono font-bold text-zinc-200 focus:outline-none focus:border-indigo-500 flex-1 uppercase"
-                      />
-                      <button
-                        type="submit"
-                        className="bg-indigo-600 hover:bg-indigo-500 text-white font-bold text-xs px-3.5 py-1.5 rounded-lg transition-colors cursor-pointer"
-                      >
-                        Apply
-                      </button>
-                    </form>
-                    {couponError && (
-                      <p className="text-[10px] font-bold text-rose-400 mt-1 select-none">⚠️ {couponError}</p>
-                    )}
-                    {couponSuccess && (
-                      <p className="text-[10px] font-bold text-emerald-400 mt-1 select-none">✓ {couponSuccess}</p>
-                    )}
-                  </div>
-
-                  {/* Pricing Breakdown */}
-                  <div className="space-y-1.5 text-xs text-zinc-400">
-                    <div className="flex justify-between">
-                      <span>Subtotal</span>
-                      <span className="font-mono text-zinc-200">₹{subtotal.toLocaleString('en-IN')}</span>
-                    </div>
-                    {appliedDiscount > 0 && (
-                      <div className="flex justify-between text-emerald-400/90 font-medium">
-                        <span>Discount Coupon ({appliedDiscount}% Off)</span>
-                        <span className="font-mono">-₹{discountAmount.toLocaleString('en-IN')}</span>
-                      </div>
-                    )}
-                    <div className="flex justify-between">
-                      <span>Shipping (Manufacturing Delivery)</span>
-                      <span className="text-emerald-400 font-semibold uppercase tracking-wider text-[9px] bg-emerald-500/10 border border-emerald-500/20 px-2 py-0.5 rounded">
-                        FREE Express
-                      </span>
-                    </div>
-                    <div className="flex justify-between border-t border-zinc-900 pt-3 text-sm font-extrabold text-white">
-                      <span>Total Value</span>
-                      <span className="font-mono text-indigo-400">₹{finalTotalAmount.toLocaleString('en-IN')}</span>
-                    </div>
-                  </div>
-
-                  {/* Checkout Button */}
-                  <button
-                    onClick={() => setIsCheckingOut(true)}
-                    className="w-full bg-gradient-to-r from-indigo-500 to-purple-600 hover:from-indigo-600 hover:to-purple-700 text-white font-bold text-sm py-3 px-4 rounded-xl shadow-lg hover:shadow-indigo-500/15 active:scale-[0.98] transition-all flex items-center justify-center gap-2 cursor-pointer"
-                  >
-                    <span>Proceed to Address details</span>
-                    <ChevronRight className="w-4 h-4" />
-                  </button>
-                </div>
-              )}
-
-            </div>
-          </div>
-        </div>
-      )}
-
-      {/* Premium Full-Screen Stripe Payment Gateway Overlay */}
-      {showStripeCheckout && (
-        <div className="fixed inset-0 z-50 bg-zinc-950 flex flex-col md:flex-row overflow-y-auto">
-          {/* Back button */}
-          <button 
-            onClick={() => setShowStripeCheckout(false)}
-            className="absolute top-6 left-6 flex items-center gap-2 text-zinc-500 hover:text-white transition-colors cursor-pointer text-xs font-semibold z-20"
-          >
-            <X className="w-4 h-4" />
-            <span>Cancel payment & Return</span>
-          </button>
-
-          {/* Left Pane - Order Summary & Brand */}
-          <div className="w-full md:w-1/2 bg-zinc-900/40 border-r border-zinc-900 p-8 md:p-16 flex flex-col justify-between min-h-[300px] md:min-h-screen">
-            <div className="space-y-8 mt-8">
-              {/* Stripe Brand & Locker */}
-              <div className="flex items-center justify-between">
-                <span className="text-zinc-500 text-[10px] tracking-widest font-mono uppercase font-bold flex items-center gap-1">
-                  <span className="w-2 h-2 bg-emerald-500 rounded-full animate-pulse"></span>
-                  Stripe Testmode Portal
-                </span>
-              </div>
-
-              <div className="space-y-2">
-                <h2 className="text-3xl font-extrabold text-white tracking-tight">
-                  Thread 3D Store
-                </h2>
-                <div className="text-4xl font-black text-indigo-400 font-mono">
-                  ₹{finalTotalAmount.toLocaleString('en-IN')}
-                </div>
-              </div>
-
-              {/* Order Items Scrollable */}
-              <div className="space-y-4 pt-4 border-t border-zinc-900/60 max-h-60 overflow-y-auto pr-2">
-                {cart.map((item) => (
-                  <div key={item.id} className="flex items-center gap-4 bg-zinc-950/40 p-3 rounded-xl border border-zinc-900/60">
-                    <img 
-                      src={item.thumbnailUrl || item.customDesignUrl} 
-                      alt={item.name} 
-                      className="w-12 h-12 rounded-lg border border-zinc-800 object-cover bg-zinc-900" 
-                    />
-                    <div className="flex-1 min-w-0">
-                      <h4 className="font-extrabold text-xs text-white truncate">{item.name}</h4>
-                      <p className="text-[10px] text-zinc-500 mt-0.5">Size: <span className="text-zinc-300 font-bold">{item.size}</span> • Qty: <span className="text-zinc-300 font-bold">{item.quantity}</span></p>
-                    </div>
-                    <span className="text-xs font-mono text-zinc-400">₹{((item.price || 3999) * item.quantity).toLocaleString('en-IN')}</span>
-                  </div>
-                ))}
-              </div>
-            </div>
-
-            {/* Secure Footer */}
-            <div className="space-y-4 mt-8 pt-6 border-t border-zinc-900/60">
-              <div className="flex items-center gap-3 text-zinc-500">
-                <ShieldCheck className="w-5 h-5 text-indigo-400 shrink-0" />
-                <span className="text-[10px] leading-relaxed">
-                  Guaranteed safe and secure credit card checkouts backed by industry-standard AES-256 Stripe encryptions.
-                </span>
-              </div>
-            </div>
-          </div>
-
-          {/* Right Pane - Payment Selector & Details */}
-          <div className="w-full md:w-1/2 p-8 md:p-16 flex flex-col justify-center bg-zinc-950 relative min-h-[450px]">
-            {/* Payment Container Box */}
-            <div className="max-w-md w-full mx-auto space-y-6">
-              
-              {/* Tabs */}
-              <div className="flex bg-zinc-900/60 p-1.5 rounded-xl border border-zinc-900">
-                <button
-                  type="button"
-                  onClick={() => setPaymentMethod("card")}
-                  className={`flex-1 py-2 text-center text-xs font-extrabold rounded-lg transition-all cursor-pointer ${
-                    paymentMethod === "card"
-                      ? "bg-indigo-600 text-white shadow-lg"
-                      : "text-zinc-400 hover:text-white"
-                  }`}
-                >
-                  Credit Card (Stripe)
-                </button>
-                <button
-                  type="button"
-                  onClick={() => setPaymentMethod("upi")}
-                  className={`flex-1 py-2 text-center text-xs font-extrabold rounded-lg transition-all cursor-pointer ${
-                    paymentMethod === "upi"
-                      ? "bg-indigo-600 text-white shadow-lg"
-                      : "text-zinc-400 hover:text-white"
-                  }`}
-                >
-                  UPI / Indian Apps (Razorpay)
-                </button>
-              </div>
-
-              {paymentMethod === "card" ? (
-                <>
-                  <div className="space-y-2">
-                    <h3 className="text-lg font-bold text-white">Secure Card Payment</h3>
-                    <p className="text-xs text-zinc-500">Enter credit card details. Feel free to use the Stripe Sandbox card number below:</p>
-                  </div>
-
-                  {/* Demo Sandbox Alert Badge */}
-                  <div className="bg-indigo-500/10 border border-indigo-500/20 p-3.5 rounded-xl flex items-center justify-between text-xs text-indigo-300">
-                    <span className="font-medium">Sandbox Card:</span>
-                    <span 
-                      onClick={() => {
-                        setStripeCardNumber("4242 4242 4242 4242");
-                        setStripeCardExpiry("12/28");
-                        setStripeCardCVC("424");
-                        setStripeCardName(customerName || "John Doe");
-                      }}
-                      className="bg-indigo-600 hover:bg-indigo-700 text-white font-mono px-3 py-1 rounded-md text-[10px] font-bold cursor-pointer transition-colors"
-                      title="Click to auto-fill sandbox card info"
-                    >
-                      4242 4242 4242 4242 (Click to Auto-fill)
-                    </span>
-                  </div>
-
-                  <form onSubmit={handleExecutePayment} className="space-y-4">
-                    <div>
-                      <label className="block text-[10px] font-bold uppercase tracking-wider text-zinc-400 mb-2">Cardholder Name</label>
-                      <input 
-                        type="text" 
-                        required 
-                        value={stripeCardName}
-                        onChange={(e) => setStripeCardName(e.target.value)}
-                        placeholder="e.g. John Doe"
-                        className="w-full bg-zinc-900 border border-zinc-800 rounded-lg px-4 py-2.5 text-xs text-white placeholder-zinc-600 focus:outline-none focus:border-indigo-500"
-                      />
-                    </div>
-
-                    <div>
-                      <label className="block text-[10px] font-bold uppercase tracking-wider text-zinc-400 mb-2">Card Number</label>
-                      <div className="relative">
-                        <input 
-                          type="text" 
-                          required 
-                          value={stripeCardNumber}
-                          onChange={(e) => setStripeCardNumber(e.target.value)}
-                          placeholder="4242 4242 4242 4242"
-                          className="w-full bg-zinc-900 border border-zinc-800 rounded-lg pl-10 pr-4 py-2.5 text-xs text-white placeholder-zinc-600 focus:outline-none focus:border-indigo-500 font-mono"
-                        />
-                        <CreditCard className="w-4 h-4 text-zinc-600 absolute left-3.5 top-3.5" />
-                      </div>
-                    </div>
-
-                    <div className="grid grid-cols-2 gap-4">
-                      <div>
-                        <label className="block text-[10px] font-bold uppercase tracking-wider text-zinc-400 mb-2">Expiration Date</label>
-                        <input 
-                          type="text" 
-                          required 
-                          value={stripeCardExpiry}
-                          onChange={(e) => setStripeCardExpiry(e.target.value)}
-                          placeholder="MM/YY"
-                          maxLength="5"
-                          className="w-full bg-zinc-900 border border-zinc-800 rounded-lg px-4 py-2.5 text-xs text-white placeholder-zinc-600 focus:outline-none focus:border-indigo-500 font-mono"
-                        />
-                      </div>
-                      <div>
-                        <label className="block text-[10px] font-bold uppercase tracking-wider text-zinc-400 mb-2">CVC / CVV</label>
-                        <div className="relative">
-                          <input 
-                            type="password" 
-                            required 
-                            value={stripeCardCVC}
-                            onChange={(e) => setStripeCardCVC(e.target.value)}
-                            placeholder="•••"
-                            maxLength="4"
-                            className="w-full bg-zinc-900 border border-zinc-800 rounded-lg pl-10 pr-4 py-2.5 text-xs text-white placeholder-zinc-600 focus:outline-none focus:border-indigo-500 font-mono"
-                          />
-                          <Lock className="w-4 h-4 text-zinc-600 absolute left-3.5 top-3.5" />
-                        </div>
-                      </div>
-                    </div>
-
-                    {/* Confirm Pay Button */}
-                    <button
-                      type="submit"
-                      disabled={stripePaying}
-                      className="w-full mt-6 bg-gradient-to-r from-indigo-500 to-purple-600 hover:from-indigo-600 hover:to-purple-700 text-white font-extrabold text-xs py-3 px-4 rounded-xl shadow-xl flex items-center justify-center gap-2 cursor-pointer disabled:opacity-60 transition-all active:scale-[0.99]"
-                    >
-                      {stripePaying ? (
-                        <>
-                          <Loader2 className="w-4 h-4 animate-spin text-white" />
-                          <span>Processing Stripe Payment...</span>
-                        </>
-                      ) : (
-                        <>
-                          <Lock className="w-3.5 h-3.5" />
-                          <span>Pay & Secure Design Bundle (₹{finalTotalAmount.toLocaleString('en-IN')})</span>
-                        </>
-                      )}
-                    </button>
-                  </form>
-                </>
-              ) : (
-                <>
-                  <div className="space-y-2">
-                    <h3 className="text-lg font-bold text-white flex items-center gap-1.5">
-                      <span>Instant UPI Payment</span>
-                      <span className="bg-emerald-500/10 border border-emerald-500/20 text-emerald-400 text-[9px] px-1.5 py-0.5 rounded uppercase font-bold tracking-widest font-mono">Razorpay UPI</span>
-                    </h3>
-                    <p className="text-xs text-zinc-500">Scan the secure QR Code to complete the checkout instantly using Google Pay, PhonePe, Paytm, or BHIM.</p>
-                  </div>
-
-                  {/* Scannable QR Code */}
-                  <div className="flex flex-col items-center justify-center bg-zinc-900 border border-zinc-800 p-6 rounded-2xl space-y-4">
-                    <div className="relative p-2.5 bg-zinc-950 rounded-xl border border-zinc-800">
-                      <img
-                        src={`https://api.qrserver.com/v1/create-qr-code/?size=200x200&data=${encodeURIComponent(
-                          `upi://pay?pa=designaravis@gmail.com&pn=Thread3D%20Studio&am=${finalTotalAmount}&cu=INR&tn=Thread3D%20Order`
-                        )}&color=6366f1&bgcolor=09090b`}
-                        alt="UPI QR Code"
-                        className="w-44 h-44 rounded-lg bg-zinc-950"
-                      />
-                      {stripePaying && (
-                        <div className="absolute inset-0 bg-zinc-950/80 rounded-xl flex flex-col items-center justify-center">
-                          <Loader2 className="w-8 h-8 text-indigo-400 animate-spin" />
-                          <span className="text-[10px] text-zinc-400 mt-2 font-mono">Verifying payment...</span>
-                        </div>
-                      )}
-                    </div>
-                    
-                    <div className="text-center space-y-1 select-none">
-                      <p className="text-[10px] text-zinc-400 uppercase tracking-widest font-mono font-bold">Scan QR code using UPI apps</p>
-                      <div className="text-zinc-500 text-[10px] flex items-center justify-center gap-1">
-                        <span className="w-1.5 h-1.5 bg-rose-500 rounded-full animate-ping"></span>
-                        <span>Expires in:</span>
-                        <span className="text-indigo-400 font-bold font-mono">
-                          {Math.floor(upiTimer / 60)}:{(upiTimer % 60).toString().padStart(2, "0")}
-                        </span>
-                      </div>
-                    </div>
-                  </div>
-
-                  {/* App Redirect Buttons */}
-                  <div className="space-y-3">
-                    <label className="block text-[10px] font-bold uppercase tracking-wider text-zinc-400 mb-1.5">Or Pay directly using apps</label>
-                    <div className="grid grid-cols-3 gap-3">
-                      <button
-                        type="button"
-                        onClick={() => triggerUpiSimulation("Google Pay")}
-                        disabled={stripePaying || upiTimer === 0}
-                        className="bg-zinc-900 hover:bg-zinc-850 border border-zinc-800 hover:border-zinc-700 p-3 rounded-xl flex flex-col items-center gap-1 cursor-pointer transition-colors text-white font-semibold disabled:opacity-50"
-                      >
-                        <span className="text-xs font-bold bg-gradient-to-r from-blue-400 to-green-400 bg-clip-text text-transparent">GPay</span>
-                      </button>
-                      <button
-                        type="button"
-                        onClick={() => triggerUpiSimulation("PhonePe")}
-                        disabled={stripePaying || upiTimer === 0}
-                        className="bg-zinc-900 hover:bg-zinc-850 border border-zinc-800 hover:border-zinc-700 p-3 rounded-xl flex flex-col items-center gap-1 cursor-pointer transition-colors text-white font-semibold disabled:opacity-50"
-                      >
-                        <span className="text-xs font-bold text-purple-400">PhonePe</span>
-                      </button>
-                      <button
-                        type="button"
-                        onClick={() => triggerUpiSimulation("Paytm")}
-                        disabled={stripePaying || upiTimer === 0}
-                        className="bg-zinc-900 hover:bg-zinc-850 border border-zinc-800 hover:border-zinc-700 p-3 rounded-xl flex flex-col items-center gap-1 cursor-pointer transition-colors text-white font-semibold disabled:opacity-50"
-                      >
-                        <span className="text-xs font-bold text-sky-400">Paytm</span>
-                      </button>
-                    </div>
-                  </div>
-
-                  {/* Manual Payment completed verification */}
-                  <button
-                    type="button"
-                    onClick={() => triggerUpiSimulation("QR Code Scan")}
-                    disabled={stripePaying || upiTimer === 0}
-                    className="w-full bg-gradient-to-r from-indigo-500 to-purple-600 hover:from-indigo-600 hover:to-purple-700 text-white font-extrabold text-xs py-3.5 px-4 rounded-xl shadow-xl flex items-center justify-center gap-2 cursor-pointer disabled:opacity-60 transition-all active:scale-[0.99] mt-4"
-                  >
-                    {stripePaying ? (
-                      <>
-                        <Loader2 className="w-4 h-4 animate-spin text-white" />
-                        <span>Verifying UPI payment with bank...</span>
-                      </>
-                    ) : (
-                      <>
-                        <CheckCircle className="w-4 h-4 text-emerald-400" />
-                        <span>I have completed the payment (₹{finalTotalAmount.toLocaleString('en-IN')})</span>
-                      </>
-                    )}
-                  </button>
-                </>
-              )}
-            </div>
-          </div>
-        </div>
-      )}
 
       {/* Simulated Shipment Map Checkpoint Journey Drawer */}
       {selectedTrackingOrder && (
@@ -2378,9 +1518,9 @@ export default function DashboardPage() {
                 <div>
                   <h3 className="font-extrabold text-sm text-white flex items-center gap-1.5 select-none">
                     <span>Live Package Journey Map</span>
-                    <span className="text-[10px] text-zinc-500 font-mono select-all">({selectedTrackingOrder.id.substring(0, 10)}...)</span>
+                    <span className="text-sm text-zinc-500 font-mono select-all">({selectedTrackingOrder.id.substring(0, 10)}...)</span>
                   </h3>
-                  <p className="text-[10px] text-zinc-500 mt-0.5 select-none">
+                  <p className="text-sm text-zinc-500 mt-0.5 select-none">
                     Carrier: <span className="text-zinc-300 font-bold">{selectedTrackingOrder.carrier}</span> | Tracking: <span className="text-indigo-400 font-mono font-bold select-all">{selectedTrackingOrder.tracking_number}</span>
                   </p>
                 </div>
@@ -2399,7 +1539,7 @@ export default function DashboardPage() {
               {/* Left Column: Interactive Checkpoints timeline */}
               <div className="space-y-4 flex flex-col justify-between">
                 <div>
-                  <span className="text-[9px] font-bold text-zinc-500 uppercase tracking-widest block mb-4 select-none">Fulfillment Milestones</span>
+                  <span className="text-xs font-bold text-zinc-500 uppercase tracking-widest block mb-4 select-none">Fulfillment Milestones</span>
                   
                   <div className="space-y-5 relative pl-5 border-l border-zinc-850">
                     {[
@@ -2438,11 +1578,11 @@ export default function DashboardPage() {
                               : "border-transparent group-hover:bg-zinc-900/10"
                           }`}>
                             <h4 className={`text-xs font-bold ${isReached ? "text-zinc-200" : "text-zinc-500"}`}>{cp.title}</h4>
-                            <p className="text-[10px] text-zinc-500 mt-0.5 font-medium">{cp.loc}</p>
+                            <p className="text-sm text-zinc-500 mt-0.5 font-medium">{cp.loc}</p>
                             {isCurrent && (
-                              <div className="mt-2 text-[10px] text-zinc-400 leading-relaxed font-normal space-y-1.5">
+                              <div className="mt-2 text-sm text-zinc-400 leading-relaxed font-normal space-y-1.5">
                                 <p>{cp.desc}</p>
-                                <p className="text-[9px] font-mono text-indigo-400 select-all font-bold">📍 GPS: {cp.activeLoc}</p>
+                                <p className="text-xs font-mono text-indigo-400 select-all font-bold">📍 GPS: {cp.activeLoc}</p>
                               </div>
                             )}
                           </div>
@@ -2452,7 +1592,7 @@ export default function DashboardPage() {
                   </div>
                 </div>
 
-                <div className="bg-zinc-900/40 border border-zinc-900 p-3.5 rounded-xl text-[10px] text-zinc-500 leading-relaxed select-none">
+                <div className="bg-zinc-900/40 border border-zinc-900 p-3.5 rounded-xl text-sm text-zinc-500 leading-relaxed select-none">
                   💡 <span className="font-semibold text-zinc-400">Interactive Map Sandbox:</span> Click any highlighted milestone on the list to lock onto that package checkpoint coordinate and trace GPS telemetry!
                 </div>
               </div>
@@ -2464,7 +1604,7 @@ export default function DashboardPage() {
                 <div className="absolute inset-0 bg-[linear-gradient(to_right,#1f2937_1px,transparent_1px),linear-gradient(to_bottom,#1f2937_1px,transparent_1px)] bg-[size:24px_24px] opacity-10 pointer-events-none" />
                 
                 {/* Header coordinates */}
-                <div className="z-10 bg-zinc-900/80 backdrop-blur border border-zinc-850 p-2.5 rounded-xl text-center select-all font-mono text-[9px] text-zinc-400">
+                <div className="z-10 bg-zinc-900/80 backdrop-blur border border-zinc-850 p-2.5 rounded-xl text-center select-all font-mono text-xs text-zinc-400">
                   🛰️ GPS TRACKING SYNCED IN REAL-TIME: ACTIVE TELEMETRY
                 </div>
 
@@ -2475,7 +1615,7 @@ export default function DashboardPage() {
                     <div className="w-8 h-8 rounded-xl bg-indigo-500/10 border border-indigo-500/30 flex items-center justify-center text-indigo-400">
                       🏢
                     </div>
-                    <span className="text-[8px] font-bold text-zinc-500 mt-1.5">Origin</span>
+                    <span className="text-sm font-bold text-zinc-500 mt-1.5">Origin</span>
                   </div>
 
                   {/* Route dashed line */}
@@ -2509,14 +1649,14 @@ export default function DashboardPage() {
                     }`}>
                       🏡
                     </div>
-                    <span className={`text-[8px] font-bold mt-1.5 ${activeShipmentCheckpointStep === 4 ? "text-emerald-400 font-extrabold" : "text-zinc-500"}`}>
+                    <span className={`text-sm font-bold mt-1.5 ${activeShipmentCheckpointStep === 4 ? "text-emerald-400 font-extrabold" : "text-zinc-500"}`}>
                       Home Door
                     </span>
                   </div>
                 </div>
 
                 {/* Bottom telemetry logs */}
-                <div className="z-10 bg-zinc-950 border border-zinc-900 rounded-xl p-3 font-mono text-[9px] text-zinc-500 space-y-1 select-none">
+                <div className="z-10 bg-zinc-950 border border-zinc-900 rounded-xl p-3 font-mono text-xs text-zinc-500 space-y-1 select-none">
                   <p className="text-zinc-400 font-bold uppercase tracking-wider mb-1">Telemetry Status</p>
                   <p>• STATUS: <span className={activeShipmentCheckpointStep === 4 ? "text-emerald-400 font-bold" : "text-indigo-400 font-bold"}>
                     {activeShipmentCheckpointStep === 4 ? "PACKAGE DELIVERED SUCCESSFULLY" : "IN ROUTE TO DESTINATION"}
@@ -2558,7 +1698,7 @@ export default function DashboardPage() {
                 <span className="text-xl">📏</span>
                 <div>
                   <h3 className="font-extrabold text-xs text-white">Garment Size Specifications</h3>
-                  <p className="text-[9px] text-zinc-500 font-medium">Standard unisex measurement guide for true-to-fit sizing</p>
+                  <p className="text-xs text-zinc-500 font-medium">Standard unisex measurement guide for true-to-fit sizing</p>
                 </div>
               </div>
               <button 
@@ -2574,7 +1714,7 @@ export default function DashboardPage() {
               <div className="overflow-x-auto">
                 <table className="w-full border-collapse text-left text-xs text-zinc-400 font-mono">
                   <thead>
-                    <tr className="border-b border-zinc-900 text-[9px] text-zinc-500 uppercase tracking-widest">
+                    <tr className="border-b border-zinc-900 text-xs text-zinc-500 uppercase tracking-widest">
                       <th className="py-2 px-2">Size (US/EU)</th>
                       <th className="py-2 px-2">Chest Width (in)</th>
                       <th className="py-2 px-2">Body Length (in)</th>
@@ -2600,8 +1740,8 @@ export default function DashboardPage() {
               </div>
 
               <div className="bg-zinc-900/30 border border-zinc-900 rounded-xl p-3 space-y-1">
-                <span className="text-[9px] text-zinc-400 font-bold uppercase tracking-wide block">How to Measure Chest Width:</span>
-                <p className="text-[9px] text-zinc-500 leading-relaxed font-medium">
+                <span className="text-xs text-zinc-400 font-bold uppercase tracking-wide block">How to Measure Chest Width:</span>
+                <p className="text-xs text-zinc-500 leading-relaxed font-medium">
                   Measure around the fullest part of your chest, keeping the tape horizontal. Our custom tees fit true-to-size with a premium retail drop shoulder cut.
                 </p>
               </div>
@@ -2611,7 +1751,7 @@ export default function DashboardPage() {
             <div className="p-4 bg-zinc-900/30 border-t border-zinc-900 flex justify-end">
               <button 
                 onClick={() => setShowSizeGuide(false)}
-                className="text-[10px] font-bold bg-indigo-600 hover:bg-indigo-500 text-white px-4 py-1.5 rounded-lg transition-all cursor-pointer shadow-md"
+                className="text-sm font-bold bg-indigo-600 hover:bg-indigo-500 text-white px-4 py-1.5 rounded-lg transition-all cursor-pointer shadow-md"
               >
                 Got It, Thanks!
               </button>
@@ -2637,7 +1777,7 @@ export default function DashboardPage() {
             <div className="bg-zinc-900/60 border-b border-zinc-850 p-3 flex items-center justify-between">
               <div className="flex items-center gap-2">
                 <span className="w-2 h-2 bg-emerald-500 rounded-full animate-pulse" />
-                <span className="font-extrabold text-[10px] text-white">Thread 3D Live Help</span>
+                <span className="font-extrabold text-sm text-white">Thread 3D Live Help</span>
               </div>
               <button 
                 onClick={() => setShowHelpChat(false)}
@@ -2648,7 +1788,7 @@ export default function DashboardPage() {
             </div>
 
             {/* Chat message stream */}
-            <div className="flex-1 overflow-y-auto p-4 space-y-3 font-medium text-[10px]">
+            <div className="flex-1 overflow-y-auto p-4 space-y-3 font-medium text-sm">
               {chatMessages.map((m, idx) => (
                 <div key={idx} className={`flex flex-col ${m.sender === "user" ? "items-end" : "items-start"}`}>
                   <div className={`p-2 rounded-xl max-w-[85%] leading-relaxed ${
@@ -2670,11 +1810,11 @@ export default function DashboardPage() {
                 placeholder="Ask about shipping, sizing, decals..."
                 value={chatInput}
                 onChange={(e) => setChatInput(e.target.value)}
-                className="bg-zinc-900 border border-zinc-850 px-2.5 py-1.5 rounded-lg text-[9px] text-zinc-200 focus:outline-none focus:border-indigo-500 flex-1 placeholder:text-zinc-600"
+                className="bg-zinc-900 border border-zinc-850 px-2.5 py-1.5 rounded-lg text-xs text-zinc-200 focus:outline-none focus:border-indigo-500 flex-1 placeholder:text-zinc-600"
               />
               <button
                 type="submit"
-                className="bg-indigo-600 hover:bg-indigo-500 text-white font-bold text-[9px] px-3 py-1.5 rounded-lg transition-colors cursor-pointer flex items-center justify-center shrink-0"
+                className="bg-indigo-600 hover:bg-indigo-500 text-white font-bold text-xs px-3 py-1.5 rounded-lg transition-colors cursor-pointer flex items-center justify-center shrink-0"
               >
                 Send
               </button>
@@ -2690,8 +1830,8 @@ export default function DashboardPage() {
             ✉️
           </div>
           <div className="flex-1 min-w-0">
-            <h4 className="text-[10px] font-extrabold text-white">{activeToast.title}</h4>
-            <p className="text-[9px] text-zinc-400 leading-relaxed font-medium mt-1">
+            <h4 className="text-sm font-extrabold text-white">{activeToast.title}</h4>
+            <p className="text-xs text-zinc-400 leading-relaxed font-medium mt-1">
               {activeToast.message}
             </p>
             <span className="text-[7px] font-bold text-indigo-400 block mt-2 uppercase tracking-widest animate-pulse font-mono">

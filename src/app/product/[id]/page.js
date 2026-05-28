@@ -43,6 +43,25 @@ const getSlug = (name) => {
     .replace(/(^-|-$)/g, "");
 };
 
+const getCleanDescription = (desc) => {
+  if (!desc) return "";
+  return desc
+    .replace(/<!--PERS:NAME=(true|false),NUMBER=(true|false)-->/g, "")
+    .replace(/<!--STOCK:STATUS=(in_stock|out_of_stock)-->/g, "")
+    .trim();
+};
+
+const isTemplateProduct = (p) => {
+  if (!p) return false;
+  if (p.glb_file_url) return true;
+  if (p.is_template === true) return true;
+  const cat = (p.category || "").toLowerCase().trim();
+  if (cat === "custom-template" || cat === "template" || cat.startsWith("custom-")) return true;
+  const name = (p.name || "").toLowerCase();
+  if (name.includes("template") || name.includes("blank")) return true;
+  return false;
+};
+
 export default function ProductDetailPage({ params }) {
   const router = useRouter();
   
@@ -65,9 +84,14 @@ export default function ProductDetailPage({ params }) {
   
   const [selectedSize, setSelectedSize] = useState("M");
   const [quantity, setQuantity] = useState(1);
+  const [customName, setCustomName] = useState("");
+  const [customNumber, setCustomNumber] = useState("");
   const [activeToast, setActiveToast] = useState(null);
   const [isAdding, setIsAdding] = useState(false);
   const [isWishlisted, setIsWishlisted] = useState(false);
+  const [enableCustomName, setEnableCustomName] = useState(false);
+  const [enableCustomNumber, setEnableCustomNumber] = useState(false);
+  const [stockStatus, setStockStatus] = useState("in_stock");
 
   const [hasPurchased, setHasPurchased] = useState(false);
   const [simulationMode, setSimulationMode] = useState(false);
@@ -84,6 +108,57 @@ export default function ProductDetailPage({ params }) {
   const [faqInputQuestion, setFaqInputQuestion] = useState("");
   const [faqStatus, setFaqStatus] = useState("");
   const [localFaqs, setLocalFaqs] = useState([]);
+
+  // Technical Specifications — loaded from localStorage (set by admin per product)
+  const DEFAULT_SPECS = [
+    { key: "Fit Profile",          val: "Relaxed Modern Boxy Fit" },
+    { key: "Material",             val: "100% Organic Ring-Spun Cotton" },
+    { key: "Fabric Weight",        val: "380 GSM Heavyweight" },
+    { key: "Country of Assembly",  val: "India" },
+  ];
+  const [productSpecs, setProductSpecs] = useState(DEFAULT_SPECS);
+  const [allowPersonalization, setAllowPersonalization] = useState(false);
+  const [allowNamePersonalization, setAllowNamePersonalization] = useState(false);
+  const [allowNumberPersonalization, setAllowNumberPersonalization] = useState(false);
+
+  // Load per-product specs from localStorage when productId is known
+  useEffect(() => {
+    if (!productId) return;
+    try {
+      const raw = localStorage.getItem(`apparel_specs_${productId}`);
+      if (raw) {
+        const parsed = JSON.parse(raw);
+        if (Array.isArray(parsed) && parsed.length > 0) setProductSpecs(parsed);
+        else setProductSpecs(DEFAULT_SPECS);
+      } else {
+        setProductSpecs(DEFAULT_SPECS);
+      }
+      
+      const rawPers = localStorage.getItem(`apparel_personalization_${productId}`);
+      setAllowPersonalization(rawPers === "true");
+      
+      const rawPersName = localStorage.getItem(`apparel_pers_name_${productId}`);
+      const enableName = rawPersName === "true";
+      setAllowNamePersonalization(enableName);
+      setEnableCustomName(enableName);
+
+      const rawPersNumber = localStorage.getItem(`apparel_pers_number_${productId}`);
+      const enableNumber = rawPersNumber === "true";
+      setAllowNumberPersonalization(enableNumber);
+      setEnableCustomNumber(enableNumber);
+
+      const rawStock = localStorage.getItem(`apparel_stock_${productId}`);
+      setStockStatus(rawStock || "in_stock");
+    } catch { 
+      setProductSpecs(DEFAULT_SPECS); 
+      setAllowPersonalization(false);
+      setAllowNamePersonalization(false);
+      setAllowNumberPersonalization(false);
+      setEnableCustomName(false);
+      setEnableCustomNumber(false);
+      setStockStatus("in_stock");
+    }
+  }, [productId]);
 
   const [reviews, setReviews] = useState([]);
   const [reviewerName, setReviewerName] = useState("");
@@ -157,6 +232,39 @@ export default function ProductDetailPage({ params }) {
           loadLocalProductFallback();
         } else if (data) {
           setProduct(data);
+          
+          const pers = parseDescriptionPersonalization(data.description);
+          if (data.description && (data.description.includes("<!--PERS:") || data.description.includes("<!--STOCK:"))) {
+            const enableName = pers.allowName;
+            const enableNumber = pers.allowNumber;
+            
+            setAllowPersonalization(enableName || enableNumber);
+            setAllowNamePersonalization(enableName);
+            setAllowNumberPersonalization(enableNumber);
+            setEnableCustomName(enableName);
+            setEnableCustomNumber(enableNumber);
+            setStockStatus(pers.stockStatus);
+          } else {
+            // Check localStorage setting
+            try {
+              const rawPers = localStorage.getItem(`apparel_personalization_${productId}`);
+              const rawPersName = localStorage.getItem(`apparel_pers_name_${productId}`);
+              const rawPersNumber = localStorage.getItem(`apparel_pers_number_${productId}`);
+              const rawStock = localStorage.getItem(`apparel_stock_${productId}`);
+              
+              const enableName = rawPersName === "true";
+              const enableNumber = rawPersNumber === "true";
+              
+              setAllowPersonalization(rawPers === "true" || enableName || enableNumber);
+              setAllowNamePersonalization(enableName);
+              setAllowNumberPersonalization(enableNumber);
+              setEnableCustomName(enableName);
+              setEnableCustomNumber(enableNumber);
+              setStockStatus(rawStock || "in_stock");
+            } catch {
+              // ignore and default to false / in_stock
+            }
+          }
         } else {
           loadLocalProductFallback();
         }
@@ -167,6 +275,34 @@ export default function ProductDetailPage({ params }) {
       }
     };
 
+    const parseDescriptionPersonalization = (descString) => {
+      const result = {
+        cleanDescription: descString || "",
+        allowName: false,
+        allowNumber: false,
+        stockStatus: "in_stock"
+      };
+      if (!descString) return result;
+      
+      const match = descString.match(/<!--PERS:NAME=(true|false),NUMBER=(true|false)-->/);
+      if (match) {
+        result.allowName = match[1] === "true";
+        result.allowNumber = match[2] === "true";
+      }
+
+      const stockMatch = descString.match(/<!--STOCK:STATUS=(in_stock|out_of_stock)-->/);
+      if (stockMatch) {
+        result.stockStatus = stockMatch[1];
+      }
+
+      result.cleanDescription = descString
+        .replace(/<!--PERS:NAME=(true|false),NUMBER=(true|false)-->/g, "")
+        .replace(/<!--STOCK:STATUS=(in_stock|out_of_stock)-->/g, "")
+        .trim();
+
+      return result;
+    };
+
     const loadLocalProductFallback = () => {
       try {
         const stored = localStorage.getItem("apparel_products_local");
@@ -174,6 +310,38 @@ export default function ProductDetailPage({ params }) {
         const localProduct = fallbackList.find(p => p.id === productId);
         if (localProduct) {
           setProduct(localProduct);
+          
+          const pers = parseDescriptionPersonalization(localProduct.description);
+          if (localProduct.description && (localProduct.description.includes("<!--PERS:") || localProduct.description.includes("<!--STOCK:"))) {
+            const enableName = pers.allowName;
+            const enableNumber = pers.allowNumber;
+            
+            setAllowPersonalization(enableName || enableNumber);
+            setAllowNamePersonalization(enableName);
+            setAllowNumberPersonalization(enableNumber);
+            setEnableCustomName(enableName);
+            setEnableCustomNumber(enableNumber);
+            setStockStatus(pers.stockStatus);
+          } else {
+            try {
+              const rawPers = localStorage.getItem(`apparel_personalization_${productId}`);
+              const rawPersName = localStorage.getItem(`apparel_pers_name_${productId}`);
+              const rawPersNumber = localStorage.getItem(`apparel_pers_number_${productId}`);
+              const rawStock = localStorage.getItem(`apparel_stock_${productId}`);
+              
+              const enableName = rawPersName === "true";
+              const enableNumber = rawPersNumber === "true";
+              
+              setAllowPersonalization(rawPers === "true" || enableName || enableNumber);
+              setAllowNamePersonalization(enableName);
+              setAllowNumberPersonalization(enableNumber);
+              setEnableCustomName(enableName);
+              setEnableCustomNumber(enableNumber);
+              setStockStatus(rawStock || "in_stock");
+            } catch {
+              // ignore
+            }
+          }
         } else {
           setErrorMsg("Garment product could not be retrieved from active catalog.");
         }
@@ -442,33 +610,33 @@ export default function ProductDetailPage({ params }) {
     // Check zone distance from Chennai
     if (startsWith3 >= "600" && startsWith3 <= "603" || startsWith3 === "609" || pincode.startsWith("600")) {
       // Local Chennai Pincodes (Fastest Local Dispatch)
-      const d = new Date(today); d.setDate(today.getDate() + 5); 
+      const d = new Date(today); d.setDate(today.getDate() + 9); 
       estimate = { 
-        date: `Estimated: 3-5 Business Days (${d.toLocaleDateString(undefined, { weekday: 'long', month: 'short', day: 'numeric' })})`, 
+        date: `Estimated: 7-9 Business Days (${d.toLocaleDateString(undefined, { weekday: 'long', month: 'short', day: 'numeric' })})`, 
         carrier: "BlueDart Local Express", 
         hub: "Chennai Main Customization Hub" 
       };
     } else if (startsWith2 >= "60" && startsWith2 <= "64") {
       // Tamil Nadu State region
-      const d = new Date(today); d.setDate(today.getDate() + 7); 
+      const d = new Date(today); d.setDate(today.getDate() + 10); 
       estimate = { 
-        date: `Estimated: 5-7 Business Days (${d.toLocaleDateString(undefined, { weekday: 'long', month: 'short', day: 'numeric' })})`, 
+        date: `Estimated: 8-10 Business Days (${d.toLocaleDateString(undefined, { weekday: 'long', month: 'short', day: 'numeric' })})`, 
         carrier: "Delhivery Surface Priority", 
         hub: "Chennai Main Customization Hub" 
       };
     } else if (startsWith1 === "5" || startsWith1 === "6") {
       // South India Zone (Karnataka, Kerala, AP, Telangana)
-      const d = new Date(today); d.setDate(today.getDate() + 8); 
+      const d = new Date(today); d.setDate(today.getDate() + 11); 
       estimate = { 
-        date: `Estimated: 6-8 Business Days (${d.toLocaleDateString(undefined, { weekday: 'long', month: 'short', day: 'numeric' })})`, 
+        date: `Estimated: 9-11 Business Days (${d.toLocaleDateString(undefined, { weekday: 'long', month: 'short', day: 'numeric' })})`, 
         carrier: "BlueDart Priority Air", 
         hub: "Chennai Main Customization Hub" 
       };
     } else {
       // Pan-India National Zone (Rest of India)
-      const d = new Date(today); d.setDate(today.getDate() + 12); 
+      const d = new Date(today); d.setDate(today.getDate() + 14); 
       estimate = { 
-        date: `Estimated: 8-12 Business Days (${d.toLocaleDateString(undefined, { weekday: 'long', month: 'short', day: 'numeric' })})`, 
+        date: `Estimated: 10-14 Business Days (${d.toLocaleDateString(undefined, { weekday: 'long', month: 'short', day: 'numeric' })})`, 
         carrier: "Delhivery National Air", 
         hub: "Chennai Main Customization Hub" 
       };
@@ -480,20 +648,35 @@ export default function ProductDetailPage({ params }) {
     if (!product) return;
     setIsAdding(true);
     const itemId = `cart_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
+    const finalCustomName = enableCustomName ? (customName.trim() || null) : null;
+    const finalCustomNumber = enableCustomNumber ? (customNumber.trim() || null) : null;
     const cartItem = {
       id: itemId, productId: product.id,
       name: `${product.name} (Ready-to-Wear)`,
       baseTexture: product.texture_url, glbUrl: product.glb_file_url, thumbnailUrl: product.texture_url,
-      size: selectedSize, quantity, addedAt: new Date().toISOString(), price: product.price || 3999, fabric: "cotton"
+      size: selectedSize, quantity, addedAt: new Date().toISOString(), price: product.price || 3999, fabric: "cotton",
+      customName: finalCustomName,
+      customNumber: finalCustomNumber
     };
     try {
       const stored = localStorage.getItem("apparel_cart");
       const currentCart = stored ? JSON.parse(stored) : [];
-      const existingIdx = currentCart.findIndex(item => item.productId === product.id && item.size === selectedSize && !item.designCacheKey);
+      const existingIdx = currentCart.findIndex(item => 
+        item.productId === product.id && 
+        item.size === selectedSize && 
+        !item.designCacheKey && 
+        item.customName === finalCustomName && 
+        item.customNumber === finalCustomNumber
+      );
       if (existingIdx > -1) { currentCart[existingIdx].quantity += quantity; } else { currentCart.push(cartItem); }
       localStorage.setItem("apparel_cart", JSON.stringify(currentCart));
       window.dispatchEvent(new Event("cart-updated"));
-      setActiveToast({ title: "🛒 Added to Shopping Bag", message: `${quantity}x ${product.name} (Size: ${selectedSize}) has been added.` });
+      
+      const toastMsg = finalCustomName 
+        ? `${quantity}x ${product.name} personalized for "${finalCustomName}" has been added.`
+        : `${quantity}x ${product.name} has been added to your shopping bag.`;
+        
+      setActiveToast({ title: "🛒 Added to Shopping Bag", message: toastMsg });
     } catch (e) { console.error("Cart addition failed:", e); }
     finally { setIsAdding(false); }
   };
@@ -609,10 +792,10 @@ export default function ProductDetailPage({ params }) {
           <div className="w-8 h-8 rounded-full bg-emerald-500/15 border border-emerald-500/25 text-emerald-400 flex items-center justify-center shrink-0 text-sm">✓</div>
           <div className="flex-1">
             <h4 className="text-xs font-bold text-white">{activeToast.title}</h4>
-            <p className="text-[10px] text-zinc-400 mt-0.5 leading-normal">{activeToast.message}</p>
+            <p className="text-sm text-zinc-400 mt-0.5 leading-normal">{activeToast.message}</p>
             <div className="flex gap-3 mt-2">
-              <Link href="/dashboard?cart=open" className="text-[9px] font-extrabold text-indigo-400 underline underline-offset-2 hover:text-indigo-300">Checkout Now →</Link>
-              <button onClick={() => setActiveToast(null)} className="text-[9px] font-bold text-zinc-500 hover:text-zinc-400">Dismiss</button>
+              <button onClick={() => window.dispatchEvent(new Event("open-cart"))} className="text-xs font-extrabold text-indigo-400 underline underline-offset-2 hover:text-indigo-300 cursor-pointer">Checkout Now →</button>
+              <button onClick={() => setActiveToast(null)} className="text-xs font-bold text-zinc-500 hover:text-zinc-400">Dismiss</button>
             </div>
           </div>
           <button onClick={() => setActiveToast(null)} className="text-zinc-600 hover:text-zinc-400 cursor-pointer">
@@ -631,11 +814,20 @@ export default function ProductDetailPage({ params }) {
             </div>
             <button
               onClick={handleAddToCart}
-              disabled={isAdding}
-              className="px-5 py-2.5 bg-gradient-to-r from-indigo-500 to-purple-600 hover:from-indigo-600 hover:to-purple-700 text-white font-bold text-xs rounded-xl shadow-lg flex items-center gap-1.5 cursor-pointer disabled:opacity-50 transition-all shrink-0"
+              disabled={isAdding || stockStatus === "out_of_stock"}
+              className={`px-5 py-2.5 text-white font-bold text-xs rounded-xl shadow-lg flex items-center gap-1.5 cursor-pointer disabled:opacity-50 transition-all shrink-0 ${stockStatus === "out_of_stock" ? "bg-zinc-800 border border-zinc-700 text-zinc-500 cursor-not-allowed" : "bg-gradient-to-r from-indigo-500 to-purple-600 hover:from-indigo-600 hover:to-purple-700"}`}
             >
-              <ShoppingBag className="w-3.5 h-3.5" />
-              <span>Add to Bag</span>
+              {stockStatus === "out_of_stock" ? (
+                <>
+                  <Lock className="w-3.5 h-3.5" />
+                  <span>Out of Stock</span>
+                </>
+              ) : (
+                <>
+                  <ShoppingBag className="w-3.5 h-3.5" />
+                  <span>Add to Bag</span>
+                </>
+              )}
             </button>
           </div>
         </>
@@ -652,7 +844,7 @@ export default function ProductDetailPage({ params }) {
           {process.env.NODE_ENV !== "production" && !hasPurchased && (
             <button
               onClick={() => setSimulationMode(!simulationMode)}
-              className={`text-[9px] font-extrabold px-3 py-1.5 rounded-xl border tracking-wider transition-all cursor-pointer flex items-center gap-1 ${simulationMode ? "bg-emerald-600/25 border-emerald-500/30 text-emerald-400" : "bg-zinc-900/60 border-zinc-800/80 text-zinc-500 hover:text-zinc-400"}`}
+              className={`text-xs font-extrabold px-3 py-1.5 rounded-xl border tracking-wider transition-all cursor-pointer flex items-center gap-1 ${simulationMode ? "bg-emerald-600/25 border-emerald-500/30 text-emerald-400" : "bg-zinc-900/60 border-zinc-800/80 text-zinc-500 hover:text-zinc-400"}`}
             >
               <span>⚡ Dev:{simulationMode ? " BUYER ACTIVE" : " OFF"}</span>
             </button>
@@ -701,13 +893,13 @@ export default function ProductDetailPage({ params }) {
                       <div className="flex items-center gap-2 mb-2">
                         <button
                           onClick={() => setActiveMediaTab("photo")}
-                          className={`px-4 py-1.5 rounded-lg text-[10px] font-bold uppercase tracking-wider transition-all cursor-pointer border ${activeMediaTab === "photo" ? "bg-indigo-600 border-indigo-500 text-white shadow-md" : "bg-zinc-900 border-zinc-800 text-zinc-400 hover:text-white"}`}
+                          className={`px-4 py-1.5 rounded-lg text-sm font-bold uppercase tracking-wider transition-all cursor-pointer border ${activeMediaTab === "photo" ? "bg-indigo-600 border-indigo-500 text-white shadow-md" : "bg-zinc-900 border-zinc-800 text-zinc-400 hover:text-white"}`}
                         >
                           Photos
                         </button>
                         <button
                           onClick={() => setActiveMediaTab("3d")}
-                          className={`px-4 py-1.5 rounded-lg text-[10px] font-bold uppercase tracking-wider transition-all cursor-pointer border flex items-center gap-1 ${activeMediaTab === "3d" ? "bg-indigo-600 border-indigo-500 text-white shadow-md" : "bg-zinc-900 border-zinc-800 text-zinc-400 hover:text-white"}`}
+                          className={`px-4 py-1.5 rounded-lg text-sm font-bold uppercase tracking-wider transition-all cursor-pointer border flex items-center gap-1 ${activeMediaTab === "3d" ? "bg-indigo-600 border-indigo-500 text-white shadow-md" : "bg-zinc-900 border-zinc-800 text-zinc-400 hover:text-white"}`}
                         >
                           <Sparkles className="w-3 h-3" />
                           3D View
@@ -751,7 +943,7 @@ export default function ProductDetailPage({ params }) {
                           )}
 
                           {/* Photo counter badge */}
-                          <div className="absolute top-3 right-3 bg-zinc-950/80 border border-zinc-800 px-2 py-1 rounded-lg text-[9px] font-mono text-zinc-400 select-none backdrop-blur-sm">
+                          <div className="absolute top-3 right-3 bg-zinc-950/80 border border-zinc-800 px-2 py-1 rounded-lg text-xs font-mono text-zinc-400 select-none backdrop-blur-sm">
                             {activePhotoIndex + 1} / {images.length}
                           </div>
 
@@ -780,11 +972,11 @@ export default function ProductDetailPage({ params }) {
                           {loading3D && (
                             <div className="absolute inset-0 bg-zinc-950/80 flex flex-col items-center justify-center text-zinc-500 z-10 backdrop-blur-sm">
                               <Loader2 className="w-7 h-7 animate-spin text-zinc-400 mb-2.5" />
-                              <p className="text-[10px] uppercase tracking-wider">Loading 3D Viewport...</p>
+                              <p className="text-sm uppercase tracking-wider">Loading 3D Viewport...</p>
                             </div>
                           )}
                           <div ref={threeContainerRef} className="w-full h-full cursor-grab active:cursor-grabbing" style={{ minHeight: '400px' }} />
-                          <div className="absolute bottom-3 left-3 bg-zinc-950/80 border border-zinc-900 px-2.5 py-1 rounded-lg text-[9px] text-zinc-400 select-none pointer-events-none font-mono backdrop-blur-sm">
+                          <div className="absolute bottom-3 left-3 bg-zinc-950/80 border border-zinc-900 px-2.5 py-1 rounded-lg text-xs text-zinc-400 select-none pointer-events-none font-mono backdrop-blur-sm">
                             Drag to Rotate · Scroll to Zoom
                           </div>
                         </div>
@@ -826,12 +1018,19 @@ export default function ProductDetailPage({ params }) {
                 {/* Product heading + badge */}
                 <div className="space-y-2">
                   <div className="flex items-center gap-2 flex-wrap">
-                    <span className="inline-flex items-center gap-1 bg-emerald-500/10 border border-emerald-500/20 text-emerald-400 text-[10px] font-extrabold px-2.5 py-1 rounded-full uppercase tracking-widest select-none">
-                      <CheckCircle className="w-3 h-3" />
-                      In Stock
-                    </span>
+                    {stockStatus === "in_stock" ? (
+                      <span className="inline-flex items-center gap-1 bg-emerald-500/10 border border-emerald-500/20 text-emerald-400 text-sm font-extrabold px-2.5 py-1 rounded-full uppercase tracking-widest select-none">
+                        <CheckCircle className="w-3.5 h-3.5" />
+                        In Stock
+                      </span>
+                    ) : (
+                      <span className="inline-flex items-center gap-1 bg-rose-500/10 border border-rose-500/20 text-rose-400 text-sm font-extrabold px-2.5 py-1 rounded-full uppercase tracking-widest select-none">
+                        <X className="w-3.5 h-3.5" />
+                        Out of Stock
+                      </span>
+                    )}
                     {product.category && (
-                      <span className="inline-flex items-center gap-1 bg-indigo-500/10 border border-indigo-500/20 text-indigo-400 text-[10px] font-bold px-2.5 py-1 rounded-full uppercase tracking-widest select-none">
+                      <span className="inline-flex items-center gap-1 bg-indigo-500/10 border border-indigo-500/20 text-indigo-400 text-sm font-bold px-2.5 py-1 rounded-full uppercase tracking-widest select-none">
                         <Tag className="w-3 h-3" />
                         {product.category}
                       </span>
@@ -857,23 +1056,23 @@ export default function ProductDetailPage({ params }) {
 
                 {/* Price */}
                 <div className="bg-gradient-to-r from-zinc-900/60 to-zinc-900/30 border border-zinc-800 p-4 rounded-2xl">
-                  <span className="text-[10px] text-zinc-500 font-bold uppercase tracking-wider">Price</span>
+                  <span className="text-sm text-zinc-500 font-bold uppercase tracking-wider">Price</span>
                   <div className="flex items-baseline gap-3 mt-1">
                     <span className="text-3xl font-black text-indigo-400">
                       ₹{product.price ? product.price.toLocaleString('en-IN') : "3,999"}
                     </span>
-                    <span className="text-[10px] text-emerald-400 font-bold bg-emerald-500/10 border border-emerald-500/20 px-2 py-0.5 rounded-full">
+                    <span className="text-sm text-emerald-400 font-bold bg-emerald-500/10 border border-emerald-500/20 px-2 py-0.5 rounded-full">
                       FREE Shipping
                     </span>
                   </div>
-                  <p className="text-[10px] text-zinc-500 mt-1.5">Inclusive of all taxes</p>
+                  <p className="text-sm text-zinc-500 mt-1.5">Inclusive of all taxes</p>
                 </div>
 
                 {/* Size Selector */}
                 <div className="space-y-2.5 select-none">
                   <div className="flex justify-between items-center">
                     <span className="text-xs font-bold text-zinc-300 uppercase tracking-widest">Select Size</span>
-                    <span className="text-[10px] text-indigo-400 underline font-semibold cursor-pointer hover:text-indigo-300">Size Guide</span>
+                    <span className="text-sm text-indigo-400 underline font-semibold cursor-pointer hover:text-indigo-300">Size Guide</span>
                   </div>
                   <div className="flex gap-2 flex-wrap">
                     {["XS", "S", "M", "L", "XL", "XXL"].map(size => (
@@ -901,19 +1100,77 @@ export default function ProductDetailPage({ params }) {
                         <Plus className="w-3.5 h-3.5" />
                       </button>
                     </div>
-                    <span className="text-[10px] text-zinc-600 font-medium">Max 10 per order</span>
+                    <span className="text-sm text-zinc-600 font-medium">Max 10 per order</span>
                   </div>
                 </div>
+
+                {/* Jersey Personalization Form (For already existing/non-customized catalog items only) */}
+                {!product.id.toString().startsWith("custom_") && allowPersonalization && (
+                  <div className="bg-zinc-900/30 border border-zinc-800 p-4 rounded-2xl space-y-3.5 select-none animate-fade-in">
+                    <div className="flex items-center gap-1.5 pb-2 border-b border-zinc-850">
+                      <span className="text-sm text-zinc-400 font-bold uppercase tracking-widest">👕 Jersey Custom Personalization (Optional)</span>
+                    </div>
+
+                    <div className="grid grid-cols-2 gap-3.5">
+                      {allowNamePersonalization && (
+                        <div className="space-y-1.5 col-span-2 sm:col-span-1">
+                          <label className="text-xs text-zinc-500 font-bold uppercase tracking-wider block">Custom Name</label>
+                          <input
+                            type="text"
+                            maxLength={12}
+                            value={customName}
+                            onChange={(e) => setCustomName(e.target.value.toUpperCase().replace(/[^A-Z\s]/g, ""))}
+                            placeholder="e.g. BALA"
+                            className="w-full bg-zinc-950 border border-zinc-800 hover:border-zinc-700 focus:border-indigo-500 rounded-xl px-3.5 py-2 text-xs text-white focus:outline-none placeholder-zinc-800 font-bold tracking-wider"
+                          />
+                        </div>
+                      )}
+                      {allowNumberPersonalization && (
+                        <div className="space-y-1.5 col-span-2 sm:col-span-1">
+                          <label className="text-xs text-zinc-500 font-bold uppercase tracking-wider block">Custom Number</label>
+                          <input
+                            type="text"
+                            maxLength={2}
+                            value={customNumber}
+                            onChange={(e) => setCustomNumber(e.target.value.replace(/\D/g, ""))}
+                            placeholder="e.g. 10"
+                            className="w-full bg-zinc-950 border border-zinc-800 hover:border-zinc-700 focus:border-indigo-500 rounded-xl px-3.5 py-2 text-xs text-white focus:outline-none placeholder-zinc-800 font-bold tracking-wider"
+                          />
+                        </div>
+                      )}
+                    </div>
+                    
+                    {(customName || customNumber) && (
+                      <div className="bg-zinc-950/60 border border-zinc-900 p-2.5 rounded-xl flex items-center justify-between">
+                        <span className="text-xs text-zinc-500 font-bold uppercase">Jersey Preview:</span>
+                        <div className="bg-indigo-500/10 border border-indigo-500/25 text-indigo-400 font-black text-sm px-3 py-0.5 rounded-lg tracking-widest uppercase">
+                          {allowNamePersonalization && (customName || "NAME")}
+                          {allowNamePersonalization && allowNumberPersonalization && " | "}
+                          {allowNumberPersonalization && (customNumber || "00")}
+                        </div>
+                      </div>
+                    )}
+                  </div>
+                )}
 
                 {/* Add to Cart + Wishlist */}
                 <div className="flex gap-3 hidden lg:flex">
                   <button
                     onClick={handleAddToCart}
-                    disabled={isAdding}
-                    className="flex-1 py-3.5 bg-gradient-to-r from-indigo-500 to-purple-600 hover:from-indigo-600 hover:to-purple-700 text-white font-black text-sm rounded-2xl shadow-lg hover:shadow-indigo-500/25 active:scale-[0.99] transition-all flex items-center justify-center gap-2 cursor-pointer disabled:opacity-50"
+                    disabled={isAdding || stockStatus === "out_of_stock"}
+                    className={`flex-1 py-3.5 text-white font-black text-sm rounded-2xl shadow-lg active:scale-[0.99] transition-all flex items-center justify-center gap-2 cursor-pointer disabled:opacity-50 ${stockStatus === "out_of_stock" ? "bg-zinc-800 border border-zinc-700 text-zinc-500 cursor-not-allowed" : "bg-gradient-to-r from-indigo-500 to-purple-600 hover:from-indigo-600 hover:to-purple-700 hover:shadow-indigo-500/25"}`}
                   >
-                    <ShoppingBag className="w-4 h-4" />
-                    <span>{isAdding ? "Adding..." : "Add to Shopping Bag"}</span>
+                    {stockStatus === "out_of_stock" ? (
+                      <>
+                        <Lock className="w-4 h-4" />
+                        <span>Out of Stock</span>
+                      </>
+                    ) : (
+                      <>
+                        <ShoppingBag className="w-4 h-4" />
+                        <span>{isAdding ? "Adding..." : "Add to Shopping Bag"}</span>
+                      </>
+                    )}
                   </button>
                   <button
                     onClick={toggleWishlist}
@@ -928,7 +1185,7 @@ export default function ProductDetailPage({ params }) {
                 <div className="bg-zinc-900/30 border border-zinc-800 p-4 rounded-2xl space-y-3">
                   <div className="flex items-center gap-1.5">
                     <Truck className="w-3.5 h-3.5 text-indigo-400" />
-                    <span className="text-[10px] text-zinc-400 font-bold uppercase tracking-widest">Delivery Estimator</span>
+                    <span className="text-sm text-zinc-400 font-bold uppercase tracking-widest">Delivery Estimator</span>
                   </div>
                   <form onSubmit={handleEstimateDelivery} className="flex gap-2">
                     <input
@@ -944,16 +1201,13 @@ export default function ProductDetailPage({ params }) {
                       Check
                     </button>
                   </form>
-                  {pincodeError && <p className="text-[10px] text-rose-400 font-semibold">{pincodeError}</p>}
+                  {pincodeError && <p className="text-sm text-rose-400 font-semibold">{pincodeError}</p>}
                   {estimationResult && (
-                    <div className="bg-zinc-950/50 border border-zinc-800 p-3 rounded-xl space-y-1">
+                    <div className="bg-zinc-950/50 border border-zinc-800 p-3 rounded-xl">
                       <div className="flex items-center gap-1.5 text-emerald-400 text-xs font-bold">
                         <CheckCircle className="w-3.5 h-3.5" />
                         <span>{estimationResult.date}</span>
                       </div>
-                      <p className="text-[10px] text-zinc-400 leading-normal">
-                        Via <strong className="text-zinc-300">{estimationResult.carrier}</strong> from <span className="text-indigo-400 font-bold">{estimationResult.hub}</span>
-                      </p>
                     </div>
                   )}
                 </div>
@@ -962,26 +1216,42 @@ export default function ProductDetailPage({ params }) {
                 <div className="grid grid-cols-3 gap-2 text-center select-none">
                   {[
                     { icon: <ShieldCheck className="w-4 h-4 mx-auto text-indigo-400 mb-1" />, label: "Secure Payment" },
-                    { icon: <X className="w-4 h-4 mx-auto text-rose-500 mb-1" />, label: "No Returns" },
+                    (allowNamePersonalization || allowNumberPersonalization || isTemplateProduct(product)) ? (
+                      { icon: <X className="w-4 h-4 mx-auto text-rose-500 mb-1" />, label: "No Returns" }
+                    ) : (
+                      { icon: <RefreshCw className="w-4 h-4 mx-auto text-emerald-400 mb-1" />, label: "7-Day Returns" }
+                    ),
                     { icon: <Star className="w-4 h-4 mx-auto text-amber-400 mb-1" />, label: "Quality Fabric" },
                   ].map((badge, i) => (
                     <div key={i} className="bg-zinc-900/20 border border-zinc-900/60 p-3 rounded-xl hover:border-zinc-800 transition-colors">
                       {badge.icon}
-                      <span className="text-[9px] text-zinc-500 font-bold block uppercase tracking-wider">{badge.label}</span>
+                      <span className="text-xs text-zinc-500 font-bold block uppercase tracking-wider">{badge.label}</span>
                     </div>
                   ))}
                 </div>
 
                 {/* Return Policy Notice Disclaimer */}
-                <div className="bg-rose-950/20 border border-rose-900/30 p-3.5 rounded-2xl flex items-start gap-2.5">
-                  <span className="text-rose-500 font-bold text-xs select-none">⚠️</span>
-                  <div className="flex-1">
-                    <h4 className="text-[10px] font-bold text-rose-400 uppercase tracking-wider">No Returns or Exchanges</h4>
-                    <p className="text-[9px] text-zinc-500 leading-normal mt-0.5 font-medium">
-                      Because each apparel garment is custom-printed, tailored, and fabricated specifically to your order, we do not accept returns or exchanges.
-                    </p>
+                {(allowNamePersonalization || allowNumberPersonalization || isTemplateProduct(product)) ? (
+                  <div className="bg-rose-950/20 border border-rose-900/30 p-3.5 rounded-2xl flex items-start gap-2.5">
+                    <span className="text-rose-500 font-bold text-xs select-none">⚠️</span>
+                    <div className="flex-1">
+                      <h4 className="text-sm font-bold text-rose-400 uppercase tracking-wider">No Returns or Exchanges</h4>
+                      <p className="text-xs text-zinc-500 leading-normal mt-0.5 font-medium">
+                        Because each apparel garment is custom-printed, tailored, and fabricated specifically to your order, we do not accept returns or exchanges.
+                      </p>
+                    </div>
                   </div>
-                </div>
+                ) : (
+                  <div className="bg-emerald-950/20 border border-emerald-900/30 p-3.5 rounded-2xl flex items-start gap-2.5">
+                    <span className="text-emerald-500 font-bold text-xs select-none">✓</span>
+                    <div className="flex-1">
+                      <h4 className="text-sm font-bold text-emerald-400 uppercase tracking-wider">7-Day Returns Accepted</h4>
+                      <p className="text-xs text-zinc-500 leading-normal mt-0.5 font-medium">
+                        Returns and exchanges are accepted within 7 days of delivery. The garment must be unworn, unwashed, and in its original premium packaging.
+                      </p>
+                    </div>
+                  </div>
+                )}
               </div>
             </div>
 
@@ -995,7 +1265,7 @@ export default function ProductDetailPage({ params }) {
                   </h2>
                   <h3 className="text-xl font-bold text-zinc-100">Streetwear Redefined in 3D</h3>
                   <p className="text-xs text-zinc-400 leading-relaxed font-medium">
-                    {product.description || "This premium streetwear garment is tailored from heavy-gauge organic ringspun cotton fibers. Carefully pre-shrunk for dimension retention, it features double-needle flatlock topstitching along the shoulders and hems for a clean modern finish."}
+                    {getCleanDescription(product.description) || "This premium streetwear garment is tailored from heavy-gauge organic ringspun cotton fibers. Carefully pre-shrunk for dimension retention, it features double-needle flatlock topstitching along the shoulders and hems for a clean modern finish."}
                   </p>
                   <p className="text-xs text-zinc-400 leading-relaxed font-medium">
                     Our dynamic print overlays are embedded using digital pigment sublimation, providing high contrast and saturation that resists washing fades and maintains print longevity.
@@ -1009,11 +1279,8 @@ export default function ProductDetailPage({ params }) {
                   <div className="border border-zinc-800/60 rounded-2xl overflow-hidden divide-y divide-zinc-900/60 bg-zinc-950/30">
                     {[
                       { key: "Category", val: product.category || "t-shirt" },
-                      { key: "Fit Profile", val: "Relaxed Modern Boxy Fit" },
-                      { key: "Material", val: "100% Organic Ring-Spun Cotton" },
-                      { key: "Fabric Weight", val: "380 GSM Heavyweight" },
+                      ...productSpecs,
                       { key: "Item ID", val: product.id.substring(0, 10).toUpperCase() },
-                      { key: "Country of Assembly", val: "India" }
                     ].map(spec => (
                       <div key={spec.key} className="flex justify-between items-center px-4 py-3 text-xs hover:bg-zinc-900/20 transition-colors">
                         <span className="font-semibold text-zinc-500">{spec.key}</span>
@@ -1033,7 +1300,7 @@ export default function ProductDetailPage({ params }) {
                     <BoxIcon className="w-5 h-5 text-indigo-400" />
                     You May Also Like
                   </h2>
-                  <Link href="/dashboard" className="text-[10px] text-indigo-400 hover:text-indigo-300 font-bold uppercase tracking-wider">View All →</Link>
+                  <Link href="/dashboard" className="text-sm text-indigo-400 hover:text-indigo-300 font-bold uppercase tracking-wider">View All →</Link>
                 </div>
                 <div className="grid grid-cols-2 sm:grid-cols-2 lg:grid-cols-4 gap-4">
                   {relatedProducts.map(item => (
@@ -1050,7 +1317,7 @@ export default function ProductDetailPage({ params }) {
                         <h4 className="font-bold text-xs text-zinc-200 truncate group-hover:text-white transition-colors">{item.name}</h4>
                         <div className="flex items-center justify-between mt-2">
                           <span className="text-xs font-black text-indigo-400">₹{(item.price || 3999).toLocaleString('en-IN')}</span>
-                          <span className="text-[9px] font-bold text-zinc-500 group-hover:text-indigo-400 transition-colors">View →</span>
+                          <span className="text-xs font-bold text-zinc-500 group-hover:text-indigo-400 transition-colors">View →</span>
                         </div>
                       </div>
                     </div>
@@ -1067,7 +1334,7 @@ export default function ProductDetailPage({ params }) {
                     <HelpCircle className="w-4 h-4 text-indigo-400" />
                     Customer Q&A
                   </h2>
-                  <p className="text-[10px] text-zinc-500 mt-1">Questions about fit, fabric, care, and custom orders.</p>
+                  <p className="text-sm text-zinc-500 mt-1">Questions about fit, fabric, care, and custom orders.</p>
                 </div>
                 <div className="relative">
                   <input type="text" value={faqSearch} onChange={(e) => setFaqSearch(e.target.value)}
@@ -1084,18 +1351,18 @@ export default function ProductDetailPage({ params }) {
                   Ask
                 </button>
               </form>
-              {faqStatus && <p className="text-[10px] text-emerald-400 font-bold">{faqStatus}</p>}
+              {faqStatus && <p className="text-sm text-emerald-400 font-bold">{faqStatus}</p>}
               <div className="space-y-3">
                 {allFaqs.length === 0 ? (
                   <div className="py-8 text-center text-zinc-600 text-xs font-semibold">No matching Q&As. Ask above!</div>
                 ) : allFaqs.map((faq, idx) => (
                   <div key={faq.id || idx} className="bg-zinc-950/30 border border-zinc-900/60 p-4 rounded-2xl space-y-2">
                     <div className="flex gap-2 items-start text-xs text-zinc-100 font-bold">
-                      <span className="bg-indigo-600/15 text-indigo-400 border border-indigo-500/20 px-1.5 py-0.5 rounded font-mono text-[9px] uppercase shrink-0">Q</span>
+                      <span className="bg-indigo-600/15 text-indigo-400 border border-indigo-500/20 px-1.5 py-0.5 rounded font-mono text-xs uppercase shrink-0">Q</span>
                       <p>{faq.question}</p>
                     </div>
-                    <div className="flex gap-2 items-start text-[11px] text-zinc-400 leading-relaxed pl-8">
-                      <span className="bg-zinc-900 text-zinc-500 border border-zinc-800 px-1.5 py-0.5 rounded font-mono text-[9px] uppercase shrink-0">A</span>
+                    <div className="flex gap-2 items-start text-sm text-zinc-400 leading-relaxed pl-8">
+                      <span className="bg-zinc-900 text-zinc-500 border border-zinc-800 px-1.5 py-0.5 rounded font-mono text-xs uppercase shrink-0">A</span>
                       <p>{faq.answer}</p>
                     </div>
                   </div>
@@ -1117,7 +1384,7 @@ export default function ProductDetailPage({ params }) {
                         <Star key={star} className={`w-4 h-4 ${star <= Math.round(Number(averageStars)) ? "fill-amber-400 text-amber-400" : "text-zinc-700"}`} />
                       ))}
                     </div>
-                    <p className="text-[10px] text-zinc-500 font-semibold mt-0.5">{totalReviewsCount} global ratings</p>
+                    <p className="text-sm text-zinc-500 font-semibold mt-0.5">{totalReviewsCount} global ratings</p>
                   </div>
                 </div>
                 <div className="space-y-2">
@@ -1127,11 +1394,11 @@ export default function ProductDetailPage({ params }) {
                     return (
                       <button key={stars} onClick={() => setSelectedRatingFilter(isSelected ? null : stars)}
                         className={`w-full flex items-center gap-3 text-xs text-zinc-400 font-medium hover:text-white transition-colors cursor-pointer text-left px-2 py-1.5 rounded-lg ${isSelected ? "bg-indigo-500/10 border border-indigo-500/20 text-white" : "border border-transparent hover:bg-zinc-900/30"}`}>
-                        <span className="w-11 text-right text-[10px]">{stars} star</span>
+                        <span className="w-11 text-right text-sm">{stars} star</span>
                         <div className="flex-1 h-2 bg-zinc-900 border border-zinc-800 rounded-full overflow-hidden">
                           <div className="h-full bg-amber-400/70 rounded-full transition-all duration-500" style={{ width: `${pct}%` }} />
                         </div>
-                        <span className="w-7 text-right font-mono font-bold text-[10px]">{pct}%</span>
+                        <span className="w-7 text-right font-mono font-bold text-sm">{pct}%</span>
                       </button>
                     );
                   })}
@@ -1149,7 +1416,7 @@ export default function ProductDetailPage({ params }) {
                       Write a Review
                     </h3>
                     {canSubmitReview && (
-                      <span className="inline-flex items-center gap-1 text-[8px] bg-emerald-500/10 text-emerald-400 border border-emerald-500/25 px-2 py-0.5 rounded font-extrabold uppercase">
+                      <span className="inline-flex items-center gap-1 text-sm bg-emerald-500/10 text-emerald-400 border border-emerald-500/25 px-2 py-0.5 rounded font-extrabold uppercase">
                         <ShieldCheck className="w-3 h-3" />
                         Verified Buyer
                       </span>
@@ -1160,10 +1427,10 @@ export default function ProductDetailPage({ params }) {
                     <div className="bg-zinc-950/80 border border-zinc-900 rounded-2xl p-6 text-center relative overflow-hidden select-none">
                       <Lock className="w-7 h-7 mx-auto text-zinc-600 mb-3" />
                       <h5 className="text-xs font-bold text-zinc-400 uppercase tracking-wider">Verified Purchase Required</h5>
-                      <p className="text-[10px] text-zinc-500 max-w-sm mx-auto mt-2 leading-relaxed">Reviews are restricted to verified purchasers. Buy this item to share your experience!</p>
+                      <p className="text-sm text-zinc-500 max-w-sm mx-auto mt-2 leading-relaxed">Reviews are restricted to verified purchasers. Buy this item to share your experience!</p>
                       {process.env.NODE_ENV !== "production" && (
                         <button onClick={() => setSimulationMode(true)}
-                          className="mt-4 px-4 py-1.5 bg-indigo-500/10 hover:bg-indigo-600 border border-indigo-500/20 text-indigo-400 hover:text-white rounded-xl text-[9px] font-extrabold uppercase tracking-wider transition-all cursor-pointer">
+                          className="mt-4 px-4 py-1.5 bg-indigo-500/10 hover:bg-indigo-600 border border-indigo-500/20 text-indigo-400 hover:text-white rounded-xl text-xs font-extrabold uppercase tracking-wider transition-all cursor-pointer">
                           ⚡ Dev: Enable Buyer Mode
                         </button>
                       )}
@@ -1172,13 +1439,13 @@ export default function ProductDetailPage({ params }) {
                     <form onSubmit={handleSubmitReview} className="space-y-4">
                       <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                         <div>
-                          <label className="text-[10px] text-zinc-400 font-bold uppercase tracking-wider block mb-1.5">Your Name</label>
+                          <label className="text-sm text-zinc-400 font-bold uppercase tracking-wider block mb-1.5">Your Name</label>
                           <input type="text" value={reviewerName} onChange={(e) => setReviewerName(e.target.value)}
                             placeholder="e.g. John Doe"
                             className="w-full bg-zinc-950 border border-zinc-800 focus:border-indigo-500 rounded-xl px-4 py-2.5 text-xs text-white focus:outline-none placeholder-zinc-700 font-semibold" />
                         </div>
                         <div>
-                          <label className="text-[10px] text-zinc-400 font-bold uppercase tracking-wider block mb-1.5 select-none">Rating</label>
+                          <label className="text-sm text-zinc-400 font-bold uppercase tracking-wider block mb-1.5 select-none">Rating</label>
                           <div className="flex items-center gap-1.5 py-2">
                             {[1,2,3,4,5].map(val => (
                               <button key={val} type="button" onClick={() => setReviewRating(val)} className="cursor-pointer">
@@ -1189,13 +1456,13 @@ export default function ProductDetailPage({ params }) {
                         </div>
                       </div>
                       <div>
-                        <label className="text-[10px] text-zinc-400 font-bold uppercase tracking-wider block mb-1.5">Review Title</label>
+                        <label className="text-sm text-zinc-400 font-bold uppercase tracking-wider block mb-1.5">Review Title</label>
                         <input type="text" value={reviewTitle} onChange={(e) => setReviewTitle(e.target.value)}
                           placeholder="Summarize your experience..."
                           className="w-full bg-zinc-950 border border-zinc-800 focus:border-indigo-500 rounded-xl px-4 py-2.5 text-xs text-white focus:outline-none placeholder-zinc-700 font-semibold" />
                       </div>
                       <div>
-                        <label className="text-[10px] text-zinc-400 font-bold uppercase tracking-wider block mb-1.5">Comment</label>
+                        <label className="text-sm text-zinc-400 font-bold uppercase tracking-wider block mb-1.5">Comment</label>
                         <textarea value={reviewComment} onChange={(e) => setReviewComment(e.target.value)}
                           placeholder="Write your detailed review..."
                           rows={3}
@@ -1226,7 +1493,7 @@ export default function ProductDetailPage({ params }) {
                     </h3>
                     {selectedRatingFilter && (
                       <button onClick={() => setSelectedRatingFilter(null)}
-                        className="text-[9px] bg-indigo-600/10 border border-indigo-500/25 text-indigo-400 px-2 py-0.5 rounded font-extrabold uppercase hover:bg-indigo-600 hover:text-white transition-colors cursor-pointer">
+                        className="text-xs bg-indigo-600/10 border border-indigo-500/25 text-indigo-400 px-2 py-0.5 rounded font-extrabold uppercase hover:bg-indigo-600 hover:text-white transition-colors cursor-pointer">
                         Clear Filter ×
                       </button>
                     )}
@@ -1247,7 +1514,7 @@ export default function ProductDetailPage({ params }) {
                               <div>
                                 <h5 className="text-xs font-bold text-white flex items-center gap-1.5">
                                   <span>{rev.author || "Guest"}</span>
-                                  <span className="text-[8px] bg-emerald-500/10 text-emerald-400 border border-emerald-500/20 px-1.5 py-0.5 rounded font-extrabold uppercase">Verified</span>
+                                  <span className="text-sm bg-emerald-500/10 text-emerald-400 border border-emerald-500/20 px-1.5 py-0.5 rounded font-extrabold uppercase">Verified</span>
                                 </h5>
                                 <div className="flex items-center gap-0.5 mt-0.5">
                                   {[1,2,3,4,5].map(star => (
@@ -1256,17 +1523,17 @@ export default function ProductDetailPage({ params }) {
                                 </div>
                               </div>
                             </div>
-                            <span className="text-[9px] text-zinc-600 font-mono">
+                            <span className="text-xs text-zinc-600 font-mono">
                               {new Date(rev.created_at).toLocaleDateString(undefined, { year: "numeric", month: "short", day: "numeric" })}
                             </span>
                           </div>
                           <div className="pl-10 space-y-1">
                             <h6 className="text-xs font-extrabold text-zinc-200">{rev.title}</h6>
-                            <p className="text-[11px] text-zinc-400 leading-relaxed font-medium">{rev.comment}</p>
+                            <p className="text-sm text-zinc-400 leading-relaxed font-medium">{rev.comment}</p>
                           </div>
                           <div className="flex justify-end pl-10">
                             <button onClick={() => alert("Thank you for your feedback!")}
-                              className="text-[9px] font-bold text-zinc-500 hover:text-zinc-300 flex items-center gap-1 cursor-pointer">
+                              className="text-xs font-bold text-zinc-500 hover:text-zinc-300 flex items-center gap-1 cursor-pointer">
                               <ThumbsUp className="w-3 h-3" />
                               Helpful
                             </button>

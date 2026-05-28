@@ -21,6 +21,8 @@ import {
   Heart,
   Palette
 } from "lucide-react";
+import CartDrawer from "./CartDrawer";
+import WishlistDrawer from "./WishlistDrawer";
 
 const applyTheme = (themeName) => {
   if (typeof window === "undefined") return;
@@ -120,6 +122,8 @@ export default function Navbar({ children }) {
 
   const [activeTheme, setActiveTheme] = useState("classic");
   const [isThemeDropdownOpen, setIsThemeDropdownOpen] = useState(false);
+  const [isCartOpen, setIsCartOpen] = useState(false);
+  const [isWishlistOpen, setIsWishlistOpen] = useState(false);
 
   const [isMobileMenuOpen, setIsMobileMenuOpen] = useState(false);
   const [isProfileDropdownOpen, setIsProfileDropdownOpen] = useState(false);
@@ -166,13 +170,21 @@ export default function Navbar({ children }) {
 
   useEffect(() => {
     updateBadges();
+    
+    const handleOpenCart = () => setIsCartOpen(true);
+    const handleOpenWishlist = () => setIsWishlistOpen(true);
+    
     window.addEventListener("storage", updateBadges);
     window.addEventListener("cart-updated", updateBadges);
     window.addEventListener("wishlist-updated", updateBadges);
+    window.addEventListener("open-cart", handleOpenCart);
+    window.addEventListener("open-wishlist", handleOpenWishlist);
     return () => {
       window.removeEventListener("storage", updateBadges);
       window.removeEventListener("cart-updated", updateBadges);
       window.removeEventListener("wishlist-updated", updateBadges);
+      window.removeEventListener("open-cart", handleOpenCart);
+      window.removeEventListener("open-wishlist", handleOpenWishlist);
     };
   }, [updateBadges]);
 
@@ -325,7 +337,7 @@ export default function Navbar({ children }) {
               >
                 <Search className="w-3.5 h-3.5 text-zinc-600 group-hover:text-zinc-500 shrink-0" />
                 <span className="flex-1 text-left">Search apparel, styles...</span>
-                <kbd className="hidden lg:inline-flex items-center gap-1 px-1.5 py-0.5 bg-zinc-800 border border-zinc-700 rounded text-[9px] text-zinc-500 font-mono shrink-0">
+                <kbd className="hidden lg:inline-flex items-center gap-1 px-1.5 py-0.5 bg-zinc-800 border border-zinc-700 rounded text-xs text-zinc-500 font-mono shrink-0">
                   ⌘K
                 </kbd>
               </button>
@@ -350,34 +362,34 @@ export default function Navbar({ children }) {
 
               {/* Wishlist icon */}
               {session && (
-                <Link
-                  href="/dashboard"
+                <button
+                  onClick={() => setIsWishlistOpen(true)}
                   className="relative p-2 rounded-lg text-zinc-400 hover:text-rose-400 hover:bg-zinc-900 border border-zinc-900 hover:border-zinc-800 transition-all cursor-pointer"
                   title="Wishlist"
                 >
                   <Heart className="w-4 h-4" />
                   {wishlistCount > 0 && (
-                    <span className="absolute -top-1 -right-1 w-4 h-4 bg-rose-500 text-white rounded-full text-[8px] font-extrabold flex items-center justify-center shadow-md">
+                    <span className="absolute -top-1 -right-1 w-4 h-4 bg-rose-500 text-white rounded-full text-sm font-extrabold flex items-center justify-center shadow-md">
                       {wishlistCount > 9 ? "9+" : wishlistCount}
                     </span>
                   )}
-                </Link>
+                </button>
               )}
 
               {/* Cart */}
               {session && (
-                <Link
-                  href="/dashboard?cart=open"
+                <button
+                  onClick={() => setIsCartOpen(true)}
                   className="relative p-2 rounded-lg text-zinc-400 hover:text-white hover:bg-zinc-900 border border-zinc-900 hover:border-zinc-800 transition-all cursor-pointer"
                   title="Shopping Cart"
                 >
                   <ShoppingBag className="w-4 h-4" />
                   {cartCount > 0 && (
-                    <span className="absolute -top-1 -right-1 w-4 h-4 bg-indigo-500 text-white rounded-full text-[8px] font-extrabold flex items-center justify-center shadow-md animate-bounce">
+                    <span className="absolute -top-1 -right-1 w-4 h-4 bg-indigo-500 text-white rounded-full text-sm font-extrabold flex items-center justify-center shadow-md animate-bounce">
                       {cartCount > 9 ? "9+" : cartCount}
                     </span>
                   )}
-                </Link>
+                </button>
               )}
 
               {/* Theme Selector Palette */}
@@ -392,7 +404,7 @@ export default function Navbar({ children }) {
 
                 {isThemeDropdownOpen && (
                   <div className="absolute right-0 mt-2.5 w-44 bg-zinc-950 border border-zinc-900 rounded-2xl shadow-2xl overflow-hidden z-50 p-2 space-y-1">
-                    <div className="text-[8px] font-bold text-zinc-500 px-2 py-1 uppercase tracking-wider select-none border-b border-zinc-900 mb-1">
+                    <div className="text-sm font-bold text-zinc-500 px-2 py-1 uppercase tracking-wider select-none border-b border-zinc-900 mb-1">
                       Select Accent Theme
                     </div>
                     {[
@@ -405,7 +417,7 @@ export default function Navbar({ children }) {
                       <button
                         key={t.id}
                         onClick={() => handleThemeChange(t.id)}
-                        className={`w-full flex items-center gap-2.5 px-2.5 py-1.5 rounded-lg text-left text-[10px] font-bold transition-all uppercase tracking-wider cursor-pointer ${
+                        className={`w-full flex items-center gap-2.5 px-2.5 py-1.5 rounded-lg text-left text-sm font-bold transition-all uppercase tracking-wider cursor-pointer ${
                           activeTheme === t.id 
                             ? "bg-zinc-900 text-white" 
                             : "text-zinc-400 hover:text-white hover:bg-zinc-900/50"
@@ -434,7 +446,7 @@ export default function Navbar({ children }) {
                     }`}
                   >
                     {/* Avatar circle */}
-                    <div className="w-5 h-5 rounded-full bg-gradient-to-tr from-indigo-500 to-purple-600 flex items-center justify-center text-[9px] font-black text-white shrink-0">
+                    <div className="w-5 h-5 rounded-full bg-gradient-to-tr from-indigo-500 to-purple-600 flex items-center justify-center text-xs font-black text-white shrink-0">
                       {session.user.email.charAt(0).toUpperCase()}
                     </div>
                     <span className="hidden sm:block max-w-[90px] truncate">
@@ -454,11 +466,11 @@ export default function Navbar({ children }) {
                           </div>
                           <div className="overflow-hidden">
                             <p className="text-xs font-bold text-white truncate">{session.user.email.split("@")[0]}</p>
-                            <p className="text-[10px] text-zinc-500 truncate">{session.user.email}</p>
+                            <p className="text-sm text-zinc-500 truncate">{session.user.email}</p>
                           </div>
                         </div>
                         {isAdmin && (
-                          <div className="mt-2 inline-flex items-center gap-1 text-[9px] bg-indigo-500/10 border border-indigo-500/20 text-indigo-400 px-2 py-0.5 rounded-full font-bold uppercase tracking-wider">
+                          <div className="mt-2 inline-flex items-center gap-1 text-xs bg-indigo-500/10 border border-indigo-500/20 text-indigo-400 px-2 py-0.5 rounded-full font-bold uppercase tracking-wider">
                             <ShieldCheck className="w-2.5 h-2.5" />
                             Admin
                           </div>
@@ -467,21 +479,31 @@ export default function Navbar({ children }) {
 
                       {/* Menu items */}
                       <div className="py-1">
-                        <Link href="/dashboard" onClick={() => setIsProfileDropdownOpen(false)}
+                        <a href="/dashboard?tab=shop" onClick={() => setIsProfileDropdownOpen(false)}
                           className="flex items-center gap-2.5 px-4 py-2.5 text-xs text-zinc-400 hover:text-white hover:bg-zinc-900/60 transition-colors">
                           <ShoppingBag className="w-3.5 h-3.5 text-zinc-500" />
-                          My Orders
-                        </Link>
-                        <Link href="/dashboard?tab=tracking" onClick={() => setIsProfileDropdownOpen(false)}
-                          className="flex items-center gap-2.5 px-4 py-2.5 text-xs text-zinc-400 hover:text-white hover:bg-zinc-900/60 transition-colors">
-                          <Box className="w-3.5 h-3.5 text-zinc-500" />
-                          Track Orders
-                        </Link>
-                        <Link href="/studio" onClick={() => setIsProfileDropdownOpen(false)}
+                          Shop Catalog
+                        </a>
+                        <a href="/studio" onClick={() => setIsProfileDropdownOpen(false)}
                           className="flex items-center gap-2.5 px-4 py-2.5 text-xs text-zinc-400 hover:text-white hover:bg-zinc-900/60 transition-colors">
                           <Shirt className="w-3.5 h-3.5 text-zinc-500" />
                           3D Studio
-                        </Link>
+                        </a>
+                        <button 
+                          onClick={() => {
+                            setIsProfileDropdownOpen(false);
+                            setIsWishlistOpen(true);
+                          }}
+                          className="w-full flex items-center gap-2.5 px-4 py-2.5 text-xs text-zinc-400 hover:text-white hover:bg-zinc-900/60 transition-colors text-left cursor-pointer"
+                        >
+                          <Heart className="w-3.5 h-3.5 text-zinc-500" />
+                          Saved Wishlist
+                        </button>
+                        <a href="/dashboard?tab=tracking" onClick={() => setIsProfileDropdownOpen(false)}
+                          className="flex items-center gap-2.5 px-4 py-2.5 text-xs text-zinc-400 hover:text-white hover:bg-zinc-900/60 transition-colors">
+                          <Box className="w-3.5 h-3.5 text-zinc-500" />
+                          Track Orders
+                        </a>
                         {isAdmin && (
                           <Link href="/admin" onClick={() => setIsProfileDropdownOpen(false)}
                             className="flex items-center gap-2.5 px-4 py-2.5 text-xs text-indigo-400 hover:text-indigo-300 hover:bg-indigo-500/5 transition-colors">
@@ -567,7 +589,7 @@ export default function Navbar({ children }) {
               {session ? (
                 <div className="pt-2 border-t border-zinc-800/60 flex items-center justify-between">
                   <div className="flex items-center gap-2">
-                    <div className="w-7 h-7 rounded-full bg-gradient-to-tr from-indigo-500 to-purple-600 flex items-center justify-center text-[10px] font-black text-white">
+                    <div className="w-7 h-7 rounded-full bg-gradient-to-tr from-indigo-500 to-purple-600 flex items-center justify-center text-sm font-black text-white">
                       {session.user.email.charAt(0).toUpperCase()}
                     </div>
                     <span className="text-xs text-zinc-400 font-medium truncate max-w-[160px]">{session.user.email}</span>
@@ -626,7 +648,7 @@ export default function Navbar({ children }) {
                     <X className="w-4 h-4" />
                   </button>
                 )}
-                <kbd className="hidden sm:flex items-center text-[9px] font-mono text-zinc-600 bg-zinc-800 border border-zinc-700 px-1.5 py-0.5 rounded cursor-pointer"
+                <kbd className="hidden sm:flex items-center text-xs font-mono text-zinc-600 bg-zinc-800 border border-zinc-700 px-1.5 py-0.5 rounded cursor-pointer"
                   onClick={closeSearch}>
                   ESC
                 </kbd>
@@ -641,7 +663,7 @@ export default function Navbar({ children }) {
                   </div>
                 ) : searchResults.length > 0 ? (
                   <div className="py-1">
-                    <p className="px-4 pt-2 pb-1 text-[9px] text-zinc-600 font-bold uppercase tracking-widest">Products</p>
+                    <p className="px-4 pt-2 pb-1 text-xs text-zinc-600 font-bold uppercase tracking-widest">Products</p>
                     {searchResults.map(product => (
                       <button
                         key={product.id}
@@ -658,7 +680,7 @@ export default function Navbar({ children }) {
                         </div>
                         <div className="flex-1 min-w-0">
                           <p className="text-xs font-semibold text-zinc-200 group-hover:text-white truncate transition-colors">{product.name}</p>
-                          <p className="text-[10px] text-zinc-500 mt-0.5">
+                          <p className="text-sm text-zinc-500 mt-0.5">
                             {product.category && <span className="mr-2 uppercase font-semibold">{product.category}</span>}
                             <span className="text-indigo-400 font-bold">₹{(product.price || 3999).toLocaleString('en-IN')}</span>
                             {product.glb_file_url && <span className="ml-2 text-purple-400">3D</span>}
@@ -691,7 +713,7 @@ export default function Navbar({ children }) {
                   /* Default empty state: quick links */
                   <div className="p-4 space-y-4">
                     <div>
-                      <p className="text-[9px] text-zinc-600 font-bold uppercase tracking-widest mb-2">Quick Links</p>
+                      <p className="text-xs text-zinc-600 font-bold uppercase tracking-widest mb-2">Quick Links</p>
                       <div className="grid grid-cols-2 gap-2">
                         {[
                           { label: "Shop All", href: "/dashboard", icon: <ShoppingBag className="w-3.5 h-3.5" /> },
@@ -707,7 +729,7 @@ export default function Navbar({ children }) {
                         ))}
                       </div>
                     </div>
-                    <p className="text-[9px] text-zinc-700 text-center font-mono">
+                    <p className="text-xs text-zinc-700 text-center font-mono">
                       Type to search · ESC to close · ⌘K to open anywhere
                     </p>
                   </div>
@@ -717,6 +739,12 @@ export default function Navbar({ children }) {
           </div>
         </div>
       )}
+      
+      {/* Global Cart Drawer */}
+      <CartDrawer isOpen={isCartOpen} onClose={() => setIsCartOpen(false)} />
+
+      {/* Global Wishlist Drawer */}
+      <WishlistDrawer isOpen={isWishlistOpen} onClose={() => setIsWishlistOpen(false)} />
     </>
   );
 }
