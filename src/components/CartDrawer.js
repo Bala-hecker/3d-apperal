@@ -29,6 +29,13 @@ export default function CartDrawer({ isOpen, onClose }) {
   const [customerZip, setCustomerZip] = useState("");
   const [paymentMethod, setPaymentMethod] = useState("card");
 
+  // Simulated Checkout Payment Details
+  const [cardNumber, setCardNumber] = useState("");
+  const [cardExpiry, setCardExpiry] = useState("");
+  const [cardCvc, setCardCvc] = useState("");
+  const [cardName, setCardName] = useState("");
+  const [upiId, setUpiId] = useState("");
+
   // Promo Code State
   const [couponCode, setCouponCode] = useState("");
   const [appliedDiscount, setAppliedDiscount] = useState(0);
@@ -439,10 +446,108 @@ export default function CartDrawer({ isOpen, onClose }) {
                 <button type="button" onClick={() => setPaymentMethod("card")} className={`flex-1 py-2 text-center text-xs font-extrabold rounded-lg transition-all cursor-pointer ${paymentMethod === "card" ? "bg-indigo-600 text-white shadow-lg" : "text-zinc-400 hover:text-white"}`}>Credit Card</button>
                 <button type="button" onClick={() => setPaymentMethod("upi")} className={`flex-1 py-2 text-center text-xs font-extrabold rounded-lg transition-all cursor-pointer ${paymentMethod === "upi" ? "bg-indigo-600 text-white shadow-lg" : "text-zinc-400 hover:text-white"}`}>UPI / Netbanking</button>
               </div>
-              <div className="bg-zinc-900/40 border border-zinc-800 p-6 rounded-2xl space-y-4">
-                <button onClick={() => executeOrderPlacement(paymentMethod)} disabled={isSubmittingOrder} className="w-full bg-indigo-600 hover:bg-indigo-500 text-white font-bold py-3.5 px-4 rounded-xl transition-all flex items-center justify-center gap-2 cursor-pointer">
-                  {isSubmittingOrder ? <Loader2 className="w-4 h-4 animate-spin" /> : <span>Pay ₹{finalTotalAmount.toLocaleString('en-IN')} securely</span>}
-                </button>
+              <div className="bg-zinc-900/40 border border-zinc-800 p-6 rounded-2xl space-y-4 font-sans text-left">
+                {paymentMethod === "card" ? (
+                  <div className="space-y-4">
+                    <span className="text-xs font-bold text-zinc-400 uppercase tracking-widest block select-none">Card Information</span>
+                    
+                    <div>
+                      <label className="block text-[10px] font-bold text-zinc-500 uppercase tracking-widest mb-1.5 select-none">Cardholder Name</label>
+                      <input 
+                        type="text"
+                        value={cardName}
+                        onChange={(e) => setCardName(e.target.value)}
+                        placeholder="e.g. John Doe"
+                        className="w-full bg-zinc-950 border border-zinc-800 rounded-lg px-3.5 py-2 text-xs text-white placeholder-zinc-700 focus:outline-none focus:border-indigo-500 font-sans"
+                        required
+                      />
+                    </div>
+
+                    <div>
+                      <label className="block text-[10px] font-bold text-zinc-500 uppercase tracking-widest mb-1.5 select-none">Card Number</label>
+                      <input 
+                        type="text"
+                        value={cardNumber}
+                        onChange={(e) => {
+                          const val = e.target.value.replace(/\D/g, "").substring(0, 16);
+                          const formatted = val.replace(/(\d{4})(?=\d)/g, "$1 ");
+                          setCardNumber(formatted);
+                        }}
+                        placeholder="4242 4242 4242 4242"
+                        className="w-full bg-zinc-950 border border-zinc-800 rounded-lg px-3.5 py-2 text-xs text-white placeholder-zinc-700 focus:outline-none focus:border-indigo-500 font-mono"
+                        required
+                      />
+                    </div>
+
+                    <div className="grid grid-cols-2 gap-4">
+                      <div>
+                        <label className="block text-[10px] font-bold text-zinc-500 uppercase tracking-widest mb-1.5 select-none">Expiration Date</label>
+                        <input 
+                          type="text"
+                          value={cardExpiry}
+                          onChange={(e) => {
+                            const val = e.target.value.replace(/\D/g, "").substring(0, 4);
+                            if (val.length >= 2) {
+                              setCardExpiry(`${val.substring(0, 2)}/${val.substring(2, 4)}`);
+                            } else {
+                              setCardExpiry(val);
+                            }
+                          }}
+                          placeholder="MM/YY"
+                          className="w-full bg-zinc-950 border border-zinc-800 rounded-lg px-3.5 py-2 text-xs text-white placeholder-zinc-700 focus:outline-none focus:border-indigo-500 font-mono"
+                          required
+                        />
+                      </div>
+                      <div>
+                        <label className="block text-[10px] font-bold text-zinc-500 uppercase tracking-widest mb-1.5 select-none">CVC / CVV</label>
+                        <input 
+                          type="password"
+                          value={cardCvc}
+                          onChange={(e) => setCardCvc(e.target.value.replace(/\D/g, "").substring(0, 3))}
+                          placeholder="•••"
+                          className="w-full bg-zinc-950 border border-zinc-800 rounded-lg px-3.5 py-2 text-xs text-white placeholder-zinc-700 focus:outline-none focus:border-indigo-500 font-mono"
+                          required
+                        />
+                      </div>
+                    </div>
+                  </div>
+                ) : (
+                  <div className="space-y-4">
+                    <span className="text-xs font-bold text-zinc-400 uppercase tracking-widest block select-none">UPI Payment Details</span>
+                    <div>
+                      <label className="block text-[10px] font-bold text-zinc-500 uppercase tracking-widest mb-1.5 select-none">Virtual Payment Address (VPA)</label>
+                      <input 
+                        type="text"
+                        value={upiId}
+                        onChange={(e) => setUpiId(e.target.value)}
+                        placeholder="e.g. john@okaxis"
+                        className="w-full bg-zinc-950 border border-zinc-800 rounded-lg px-3.5 py-2 text-xs text-white placeholder-zinc-700 focus:outline-none focus:border-indigo-500 font-mono"
+                        required
+                      />
+                      <p className="text-[10px] text-zinc-600 mt-2.5 leading-normal">Submit your UPI ID to trigger a simulated checkout notification request on your banking app device.</p>
+                    </div>
+                  </div>
+                )}
+
+                <div className="pt-2">
+                  <button 
+                    onClick={() => {
+                      if (paymentMethod === "card" && (!cardName.trim() || !cardNumber.trim() || !cardExpiry.trim() || !cardCvc.trim())) {
+                        alert("Please fill in all credit card payment details.");
+                        return;
+                      }
+                      if (paymentMethod === "upi" && !upiId.trim()) {
+                        alert("Please provide your VPA / UPI ID.");
+                        return;
+                      }
+                      executeOrderPlacement(paymentMethod);
+                    }} 
+                    disabled={isSubmittingOrder} 
+                    className="w-full bg-indigo-600 hover:bg-indigo-500 text-white font-bold py-3.5 px-4 rounded-xl transition-all flex items-center justify-center gap-2 cursor-pointer"
+                  >
+                    {isSubmittingOrder ? <Loader2 className="w-4 h-4 animate-spin" /> : <span>Pay ₹{finalTotalAmount.toLocaleString('en-IN')} securely</span>}
+                  </button>
+                </div>
               </div>
             </div>
           </div>
