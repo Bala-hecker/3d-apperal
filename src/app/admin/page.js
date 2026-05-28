@@ -195,6 +195,14 @@ export default function AdminPage() {
   const [carrierInput, setCarrierInput] = useState("FedEx");
   const [statusInput, setStatusInput] = useState("processing");
 
+  // Customer Q&A and FAQ States
+  const [globalFaqs, setGlobalFaqs] = useState([]);
+  const [answeringFaqId, setAnsweringFaqId] = useState(null);
+  const [faqAnswerInput, setFaqAnswerInput] = useState("");
+  const [newFaqProductId, setNewFaqProductId] = useState("");
+  const [newFaqQuestion, setNewFaqQuestion] = useState("");
+  const [newFaqAnswer, setNewFaqAnswer] = useState("");
+
   // Orders State
   const [activeTab, setActiveTab] = useState("catalog"); // "catalog", "orders", or "logs"
   const [orders, setOrders] = useState([]);
@@ -855,6 +863,7 @@ export default function AdminPage() {
           fetchProducts();
           fetchOrders();
           checkDatabaseSchema();
+          fetchGlobalFaqs();
           // Load dynamic categories from localStorage
           setCatalogCategories(loadStoredCategories());
         }
@@ -902,6 +911,161 @@ export default function AdminPage() {
       console.error("Error fetching products:", err.message);
     } finally {
       setLoadingProducts(false);
+    }
+  };
+
+  // Fetch all global Customer Q&A and pre-design FAQ questions
+  const fetchGlobalFaqs = () => {
+    try {
+      const stored = localStorage.getItem("apparel_faqs_global");
+      if (stored) {
+        setGlobalFaqs(JSON.parse(stored));
+      } else {
+        const sampleFaqs = [
+          {
+            id: 1,
+            productId: "t-shirt",
+            productName: "Pre-designed Streetwear Jersey",
+            question: "Can I customize the color overlay or upload logos on this product?",
+            answer: "No, this is a ready-to-wear pre-designed catalog item. For custom decals and 3D color mapping, head to our 3D Design Studio tab.",
+            isCustom: true,
+            created_at: new Date(Date.now() - 3600000 * 24).toISOString()
+          },
+          {
+            id: 2,
+            productId: "hoodie",
+            productName: "Premium Heavyweight Hoodie",
+            question: "What specific fabric structure does this use?",
+            answer: "High-density ringspun organic cotton (380 GSM). Premium double-knitted draping structure that fits flat with minimal wrinkles.",
+            isCustom: true,
+            created_at: new Date(Date.now() - 3600000 * 12).toISOString()
+          }
+        ];
+        localStorage.setItem("apparel_faqs_global", JSON.stringify(sampleFaqs));
+        setGlobalFaqs(sampleFaqs);
+      }
+    } catch (e) {
+      setGlobalFaqs([]);
+    }
+  };
+
+  // Answer a customer question
+  const handleSaveFaqAnswer = async (faqId) => {
+    if (!faqAnswerInput.trim()) return;
+    
+    try {
+      const stored = localStorage.getItem("apparel_faqs_global");
+      const globalList = stored ? JSON.parse(stored) : [];
+      
+      let targetFaq = null;
+      const updatedGlobal = globalList.map(faq => {
+        if (faq.id === faqId) {
+          targetFaq = { ...faq, answer: faqAnswerInput };
+          return targetFaq;
+        }
+        return faq;
+      });
+      
+      localStorage.setItem("apparel_faqs_global", JSON.stringify(updatedGlobal));
+      setGlobalFaqs(updatedGlobal);
+      
+      if (targetFaq && targetFaq.productId) {
+        const prodKey = `apparel_faqs_${targetFaq.productId}`;
+        const prodStored = localStorage.getItem(prodKey);
+        const prodList = prodStored ? JSON.parse(prodStored) : [];
+        const updatedProdList = prodList.map(faq => {
+          if (faq.id === faqId || faq.question === targetFaq.question) {
+            return { ...faq, answer: faqAnswerInput };
+          }
+          return faq;
+        });
+        if (!updatedProdList.some(faq => faq.id === faqId)) {
+          updatedProdList.push(targetFaq);
+        }
+        localStorage.setItem(prodKey, JSON.stringify(updatedProdList));
+      }
+      
+      await addAuditLog(`Answered customer Q&A question: "${targetFaq?.question?.substring(0, 40)}..." for product "${targetFaq?.productName}".`);
+      setStatusMsg({ type: "success", text: "Customer question answered successfully!" });
+      
+      setAnsweringFaqId(null);
+      setFaqAnswerInput("");
+    } catch (e) {
+      console.error("Failed to answer FAQ:", e);
+      setStatusMsg({ type: "error", text: "Failed to submit answer." });
+    }
+  };
+
+  // Delete Q&A entry
+  const handleDeleteFaq = async (faqId) => {
+    if (!confirm("Are you sure you want to delete this Q&A entry?")) return;
+    
+    try {
+      const stored = localStorage.getItem("apparel_faqs_global");
+      const globalList = stored ? JSON.parse(stored) : [];
+      
+      const targetFaq = globalList.find(faq => faq.id === faqId);
+      const updatedGlobal = globalList.filter(faq => faq.id !== faqId);
+      
+      localStorage.setItem("apparel_faqs_global", JSON.stringify(updatedGlobal));
+      setGlobalFaqs(updatedGlobal);
+      
+      if (targetFaq && targetFaq.productId) {
+        const prodKey = `apparel_faqs_${targetFaq.productId}`;
+        const prodStored = localStorage.getItem(prodKey);
+        const prodList = prodStored ? JSON.parse(prodStored) : [];
+        const updatedProdList = prodList.filter(faq => faq.id !== faqId && faq.question !== targetFaq.question);
+        localStorage.setItem(prodKey, JSON.stringify(updatedProdList));
+      }
+      
+      await addAuditLog(`Deleted Q&A item: "${targetFaq?.question?.substring(0, 40)}..." for product "${targetFaq?.productName}".`);
+      setStatusMsg({ type: "success", text: "Q&A entry removed from system." });
+    } catch (e) {
+      console.error("Failed to delete FAQ:", e);
+    }
+  };
+
+  // Create new FAQ for a product
+  const handleCreateFaq = async (e) => {
+    e.preventDefault();
+    if (!newFaqProductId || !newFaqQuestion.trim() || !newFaqAnswer.trim()) {
+      setStatusMsg({ type: "error", text: "All fields are required to create a new FAQ entry." });
+      return;
+    }
+    
+    try {
+      const selectedProduct = products.find(p => p.id === newFaqProductId);
+      const faqId = Date.now();
+      const newFaq = {
+        id: faqId,
+        productId: newFaqProductId,
+        productName: selectedProduct?.name || "Ready-made Garment",
+        question: newFaqQuestion,
+        answer: newFaqAnswer,
+        isCustom: true,
+        created_at: new Date().toISOString()
+      };
+      
+      const storedGlobal = localStorage.getItem("apparel_faqs_global");
+      const globalList = storedGlobal ? JSON.parse(storedGlobal) : [];
+      const updatedGlobal = [newFaq, ...globalList];
+      localStorage.setItem("apparel_faqs_global", JSON.stringify(updatedGlobal));
+      setGlobalFaqs(updatedGlobal);
+      
+      const prodKey = `apparel_faqs_${newFaqProductId}`;
+      const storedProd = localStorage.getItem(prodKey);
+      const prodList = storedProd ? JSON.parse(storedProd) : [];
+      const updatedProdList = [newFaq, ...prodList];
+      localStorage.setItem(prodKey, JSON.stringify(updatedProdList));
+      
+      await addAuditLog(`Created new FAQ: "${newFaqQuestion.substring(0, 40)}..." for product "${selectedProduct?.name}".`);
+      setStatusMsg({ type: "success", text: "New FAQ created and assigned successfully!" });
+      
+      setNewFaqQuestion("");
+      setNewFaqAnswer("");
+    } catch (e) {
+      console.error("Failed to create FAQ:", e);
+      setStatusMsg({ type: "error", text: "Failed to create FAQ." });
     }
   };
 
@@ -1529,6 +1693,24 @@ export default function AdminPage() {
             }`}
           >
             <span>Security Audit Logs</span>
+          </button>
+          <button
+            onClick={() => {
+              setActiveTab("qa");
+              fetchGlobalFaqs();
+            }}
+            className={`text-xs font-bold uppercase tracking-wider pb-3 border-b-2 transition-all cursor-pointer flex items-center gap-2 ${
+              activeTab === "qa"
+                ? "border-indigo-500 text-indigo-400 font-extrabold"
+                : "border-transparent text-zinc-500 hover:text-zinc-300"
+            }`}
+          >
+            <span>Customer Q&A</span>
+            {globalFaqs.filter(faq => !faq.answer || faq.answer.includes("Thank you for asking")).length > 0 && (
+              <span className="bg-rose-600 text-white text-xs font-bold px-1.5 py-0.5 rounded-full">
+                {globalFaqs.filter(faq => !faq.answer || faq.answer.includes("Thank you for asking")).length}
+              </span>
+            )}
           </button>
         </section>
 
@@ -2689,7 +2871,7 @@ export default function AdminPage() {
               )}
             </div>
           </div>
-        ) : (
+        ) : activeTab === "logs" ? (
           /* Security Audit Logs ledger tab */
           <div className="space-y-6">
             <div className="bg-zinc-900/20 border border-zinc-900 rounded-xl p-6">
@@ -2759,6 +2941,172 @@ export default function AdminPage() {
                   </div>
                 </div>
               )}
+            </div>
+          </div>
+        ) : (
+          /* Customer Q&A Panel Tab */
+          <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
+            {/* Left section: Create new FAQ */}
+            <div className="lg:col-span-1">
+              <div className="bg-zinc-900/40 border border-zinc-800 rounded-xl p-6 backdrop-blur-xl sticky top-24">
+                <div className="flex items-center gap-2 mb-4">
+                  <div className="p-1.5 bg-indigo-500/10 rounded text-indigo-400">
+                    <Plus className="w-4 h-4" />
+                  </div>
+                  <h3 className="text-sm font-bold text-white uppercase tracking-wider">Publish New Product FAQ</h3>
+                </div>
+
+                <form onSubmit={handleCreateFaq} className="space-y-4 font-sans text-left">
+                  <div>
+                    <label className="block text-xs font-bold text-zinc-400 uppercase tracking-widest mb-1.5 select-none">Target Product</label>
+                    <select
+                      value={newFaqProductId}
+                      onChange={(e) => setNewFaqProductId(e.target.value)}
+                      className="w-full bg-zinc-950/80 border border-zinc-800 rounded-lg px-3 py-2 text-xs text-white focus:outline-none focus:border-indigo-500 cursor-pointer"
+                    >
+                      <option value="">Select a catalog product...</option>
+                      {products.map(p => (
+                        <option key={p.id} value={p.id}>{p.name} ({p.id.substring(0, 8)})</option>
+                      ))}
+                    </select>
+                  </div>
+
+                  <div>
+                    <label className="block text-xs font-bold text-zinc-400 uppercase tracking-widest mb-1.5 select-none">Question</label>
+                    <textarea
+                      value={newFaqQuestion}
+                      onChange={(e) => setNewFaqQuestion(e.target.value)}
+                      placeholder="e.g. What specific fabric structure does this use?"
+                      rows="3"
+                      className="w-full bg-zinc-950/80 border border-zinc-800 rounded-lg px-3 py-2 text-xs text-white placeholder-zinc-700 focus:outline-none focus:border-indigo-500 resize-y"
+                    />
+                  </div>
+
+                  <div>
+                    <label className="block text-xs font-bold text-zinc-400 uppercase tracking-widest mb-1.5 select-none">Answer</label>
+                    <textarea
+                      value={newFaqAnswer}
+                      onChange={(e) => setNewFaqAnswer(e.target.value)}
+                      placeholder="e.g. High-density ringspun organic cotton (380 GSM)..."
+                      rows="4"
+                      className="w-full bg-zinc-950/80 border border-zinc-800 rounded-lg px-3 py-2 text-xs text-white placeholder-zinc-700 focus:outline-none focus:border-indigo-500 resize-y"
+                    />
+                  </div>
+
+                  <button
+                    type="submit"
+                    className="w-full py-2.5 bg-gradient-to-r from-indigo-500 to-purple-600 hover:from-indigo-600 hover:to-purple-700 text-white font-extrabold text-xs rounded-xl shadow-lg transition-all cursor-pointer text-center"
+                  >
+                    Publish FAQ Entry
+                  </button>
+                </form>
+              </div>
+            </div>
+
+            {/* Right section: Customer Questions Ledger */}
+            <div className="lg:col-span-2 space-y-6">
+              <div className="bg-zinc-900/20 border border-zinc-900 rounded-xl p-6">
+                <div className="flex items-center justify-between mb-6 border-b border-zinc-900 pb-4">
+                  <div className="flex items-center gap-2.5">
+                    <div className="p-1.5 bg-indigo-500/10 rounded-md text-indigo-400">
+                      <MessageSquare className="w-5 h-5" />
+                    </div>
+                    <div>
+                      <h3 className="text-base font-semibold text-white">Q&A Questions Ledger</h3>
+                      <p className="text-sm text-zinc-500 mt-0.5 select-none">Moderate customer inquiries, publish answers, and delete obsolete Q&A entries.</p>
+                    </div>
+                  </div>
+                  
+                  <button
+                    onClick={fetchGlobalFaqs}
+                    className="text-xs bg-zinc-900 hover:bg-zinc-800 border border-zinc-800 text-zinc-300 font-bold px-3 py-1.5 rounded-lg transition-colors cursor-pointer"
+                  >
+                    Sync Questions
+                  </button>
+                </div>
+
+                {globalFaqs.length === 0 ? (
+                  <div className="py-24 text-center border border-dashed border-zinc-850 rounded-2xl bg-zinc-950/10 max-w-lg mx-auto">
+                    <MessageSquare className="w-10 h-10 mx-auto text-zinc-800 mb-3" />
+                    <p className="text-sm font-semibold text-zinc-500">No customer questions found.</p>
+                    <p className="text-xs text-zinc-600 mt-1">Questions asked on product storefront pages will populate here.</p>
+                  </div>
+                ) : (
+                  <div className="space-y-4">
+                    {globalFaqs.map((faq) => {
+                      const isUnanswered = !faq.answer || faq.answer.includes("Thank you for asking");
+                      return (
+                        <div key={faq.id} className="bg-zinc-950/50 border border-zinc-900 p-4 rounded-2xl space-y-3 transition-all hover:border-zinc-800/80">
+                          <div className="flex items-start justify-between gap-3">
+                            <div className="space-y-1">
+                              <span className="text-[10px] bg-indigo-500/10 border border-indigo-500/20 text-indigo-400 px-2 py-0.5 rounded-full font-bold uppercase tracking-widest font-mono">
+                                Product: {faq.productName}
+                              </span>
+                              <h4 className="text-xs font-mono text-zinc-500 pt-1">
+                                Question ID: {faq.id} · {faq.created_at ? new Date(faq.created_at).toLocaleDateString() : "Prior Entry"}
+                              </h4>
+                            </div>
+
+                            <button
+                              onClick={() => handleDeleteFaq(faq.id)}
+                              className="p-1 hover:bg-zinc-900 rounded-lg text-zinc-500 hover:text-rose-400 transition-colors cursor-pointer select-none"
+                              title="Delete Q&A entry"
+                            >
+                              <Trash2 className="w-4 h-4" />
+                            </button>
+                          </div>
+
+                          <div className="bg-zinc-950 border border-zinc-900/50 p-3 rounded-xl text-left">
+                            <p className="text-xs font-extrabold text-indigo-300">Q: {faq.question}</p>
+                            <p className="text-xs text-zinc-400 mt-2 pl-3 border-l-2 border-zinc-800">
+                              <span className="font-bold text-zinc-500">A:</span> {faq.answer}
+                            </p>
+                          </div>
+
+                          {answeringFaqId === faq.id ? (
+                            <div className="space-y-3 pt-2">
+                              <textarea
+                                value={faqAnswerInput}
+                                onChange={(e) => setFaqAnswerInput(e.target.value)}
+                                placeholder="Type answer for the customer..."
+                                rows="3"
+                                className="w-full bg-zinc-950 border border-zinc-850 rounded-xl px-3 py-2 text-xs text-white focus:outline-none focus:border-indigo-500 resize-y"
+                              />
+                              <div className="flex justify-end gap-2">
+                                <button
+                                  onClick={() => setAnsweringFaqId(null)}
+                                  className="px-3 py-1.5 bg-zinc-900 hover:bg-zinc-800 border border-zinc-850 rounded-lg text-[10px] font-bold text-zinc-400 cursor-pointer"
+                                >
+                                  Cancel
+                                </button>
+                                <button
+                                  onClick={() => handleSaveFaqAnswer(faq.id)}
+                                  className="px-3 py-1.5 bg-indigo-600 hover:bg-indigo-500 text-white rounded-lg text-[10px] font-black cursor-pointer shadow-lg shadow-indigo-600/10"
+                                >
+                                  Submit Answer
+                                </button>
+                              </div>
+                            </div>
+                          ) : (
+                            <div className="flex justify-end pt-1">
+                              <button
+                                onClick={() => {
+                                  setAnsweringFaqId(faq.id);
+                                  setFaqAnswerInput(isUnanswered ? "" : faq.answer);
+                                }}
+                                className="px-3.5 py-1.5 bg-zinc-900 hover:bg-zinc-850 border border-zinc-800 rounded-lg text-[10px] font-extrabold text-zinc-300 hover:text-white flex items-center gap-1.5 cursor-pointer transition-colors"
+                              >
+                                <Edit className="w-3 h-3 text-indigo-400" />
+                                <span>{isUnanswered ? "Answer Question" : "Edit Answer"}</span>
+                              </button>
+                            </div>
+                          )}
+                        </div>
+                      );
+                    })}
+                  </div>
+                )}
+              </div>
             </div>
           </div>
         )}

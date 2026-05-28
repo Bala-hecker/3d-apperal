@@ -708,10 +708,30 @@ export default function ProductDetailPage({ params }) {
     e.preventDefault();
     setFaqStatus("");
     if (!faqInputQuestion.trim()) return;
-    const newQ = { question: faqInputQuestion, answer: "Thank you for asking! A textile developer will review shortly.", isCustom: true, id: Date.now() };
+    const newQ = { 
+      question: faqInputQuestion, 
+      answer: "Thank you for asking! A textile developer will review shortly.", 
+      isCustom: true, 
+      id: Date.now(),
+      productId: productId,
+      productName: product?.name || "Garment Product",
+      created_at: new Date().toISOString()
+    };
+    
+    // Save to product-specific FAQs
     const updated = [newQ, ...localFaqs];
     setLocalFaqs(updated);
     localStorage.setItem(`apparel_faqs_${productId}`, JSON.stringify(updated));
+    
+    // Save to global FAQs in localStorage for Admin Panel access!
+    try {
+      const storedGlobal = localStorage.getItem("apparel_faqs_global");
+      const globalList = storedGlobal ? JSON.parse(storedGlobal) : [];
+      localStorage.setItem("apparel_faqs_global", JSON.stringify([newQ, ...globalList]));
+    } catch (e) {
+      console.warn("Failed to update global FAQs in localStorage:", e);
+    }
+    
     setFaqInputQuestion("");
     setFaqStatus("Question submitted! Our team will respond shortly.");
     setTimeout(() => setFaqStatus(""), 4000);
