@@ -360,17 +360,17 @@ export default function ProductDetailPage({ params }) {
         const userId = session?.user?.id;
         const storedOrders = localStorage.getItem("apparel_orders");
         const localOrdersList = storedOrders ? JSON.parse(storedOrders) : [];
-        const hasLocalPurchase = localOrdersList.some(order =>
-          (order.items || []).some(item => item.productId === productId)
+        const hasLocalDeliveredPurchase = localOrdersList.some(order =>
+          order.status === "delivered" && (order.items || []).some(item => item.productId === productId)
         );
-        if (hasLocalPurchase) { setHasPurchased(true); return; }
+        if (hasLocalDeliveredPurchase) { setHasPurchased(true); return; }
         if (userId) {
           const { data, error } = await supabase.from("orders").select("*").eq("user_id", userId);
           if (!error && data) {
-            const hasDbPurchase = data.some(order =>
-              (order.items || []).some(item => item.productId === productId)
+            const hasDbDeliveredPurchase = data.some(order =>
+              order.status === "delivered" && (order.items || []).some(item => item.productId === productId)
             );
-            if (hasDbPurchase) { setHasPurchased(true); return; }
+            if (hasDbDeliveredPurchase) { setHasPurchased(true); return; }
           }
         }
         setHasPurchased(false);
@@ -1446,8 +1446,8 @@ export default function ProductDetailPage({ params }) {
                   {!canSubmitReview ? (
                     <div className="bg-zinc-950/80 border border-zinc-900 rounded-2xl p-6 text-center relative overflow-hidden select-none">
                       <Lock className="w-7 h-7 mx-auto text-zinc-600 mb-3" />
-                      <h5 className="text-xs font-bold text-zinc-400 uppercase tracking-wider">Verified Purchase Required</h5>
-                      <p className="text-sm text-zinc-500 max-w-sm mx-auto mt-2 leading-relaxed">Reviews are restricted to verified purchasers. Buy this item to share your experience!</p>
+                      <h5 className="text-xs font-bold text-zinc-400 uppercase tracking-wider">Delivery Confirmation Required</h5>
+                      <p className="text-sm text-zinc-500 max-w-sm mx-auto mt-2 leading-relaxed">Reviews are restricted to verified buyers after successful order delivery. Share your experience once your order arrives!</p>
                       {process.env.NODE_ENV !== "production" && (
                         <button onClick={() => setSimulationMode(true)}
                           className="mt-4 px-4 py-1.5 bg-indigo-500/10 hover:bg-indigo-600 border border-indigo-500/20 text-indigo-400 hover:text-white rounded-xl text-xs font-extrabold uppercase tracking-wider transition-all cursor-pointer">
