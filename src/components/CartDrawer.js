@@ -17,9 +17,9 @@ import {
 export default function CartDrawer({ isOpen, onClose }) {
   const [cart, setCart] = useState([]);
   const [isCheckingOut, setIsCheckingOut] = useState(false);
-  const [showStripeCheckout, setShowStripeCheckout] = useState(false);
   const [checkoutSuccess, setCheckoutSuccess] = useState(false);
   const [isSubmittingOrder, setIsSubmittingOrder] = useState(false);
+  const [formErrors, setFormErrors] = useState({});
 
   // Address State
   const [customerName, setCustomerName] = useState("");
@@ -27,14 +27,6 @@ export default function CartDrawer({ isOpen, onClose }) {
   const [customerAddress, setCustomerAddress] = useState("");
   const [customerCity, setCustomerCity] = useState("");
   const [customerZip, setCustomerZip] = useState("");
-  const [paymentMethod, setPaymentMethod] = useState("card");
-
-  // Simulated Checkout Payment Details
-  const [cardNumber, setCardNumber] = useState("");
-  const [cardExpiry, setCardExpiry] = useState("");
-  const [cardCvc, setCardCvc] = useState("");
-  const [cardName, setCardName] = useState("");
-  const [upiId, setUpiId] = useState("");
 
   // Promo Code State
   const [couponCode, setCouponCode] = useState("");
@@ -94,104 +86,125 @@ export default function CartDrawer({ isOpen, onClose }) {
     saveCartState([]);
   };
 
-  const handleApplyCoupon = (e) => {
+  const handleApplyCoupon = async (e) => {
     e.preventDefault();
     setCouponError(null);
     setCouponSuccess(null);
     const code = couponCode.trim().toUpperCase();
     if (!code) return;
-    if (code === "THREAD3D" || code === "SAAS20") {
-      setAppliedDiscount(20);
-      setCouponSuccess("20% Discount applied successfully!");
-    } else {
-      setCouponError("Invalid or expired promotional code.");
-      setAppliedDiscount(0);
-    }
-  };
 
-  const handlePlaceOrder = (e) => {
-    e.preventDefault();
-    if (cart.length === 0) return;
-    setShowStripeCheckout(true);
-  };
-
-  const executeOrderPlacement = async (gatewayType) => {
-    setIsSubmittingOrder(true);
-    let userId = null;
     try {
       const { data: { session } } = await supabase.auth.getSession();
-      userId = session?.user?.id;
-    } catch (e) { /* ignore auth error */ }
-    
-    const finalOrderPayload = {
-      user_id: userId || null,
-      items: cart,
-      total_amount: finalTotalAmount,
-      status: "processing",
-      shipping_details: {
-        name: customerName,
-        phone: customerPhone,
-        address: customerAddress,
-        city: customerCity,
-        zip: customerZip
-      },
-      payment_gateway: gatewayType
-    };
+      const userId = session?.user?.id || null;
+      const email = session?.user?.email || null;
 
-    let cloudSuccess = false;
-    try {
-      const { error } = await supabase.from("orders").insert([finalOrderPayload]);
-      if (!error) {
-        cloudSuccess = true;
-      } else {
-        console.warn("Supabase orders insert failed, invoking local storage redundancy fallback:", error.message);
+      const response = await fetch("/api/coupons/validate", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ code, userId, email })
+      });
+
+      const resData = await response.json();
+      if (!response.ok) {
+        setCouponError(resData.error || "Invalid coupon code.");
+        setAppliedDiscount(0);
+      } else if (resData.success && resData.coupon) {
+        const disc = resData.coupon.discount_percent;
+        setAppliedDiscount(disc);
+        setCouponSuccess(`${disc}% discount applied successfully!`);
       }
     } catch (err) {
-      console.warn("Supabase orders insert network exception, invoking local storage redundancy fallback:", err);
-    }
-
-    // Always back up/save to LocalStorage to ensure dual synchronization and offline resiliency!
-    try {
-      const fallbackId = `order_${Date.now()}_${Math.random().toString(36).substr(2, 5)}`;
-      const localBackup = {
-        id: fallbackId,
-        ...finalOrderPayload,
-        created_at: new Date().toISOString()
-      };
-
-      const stored = localStorage.getItem("apparel_orders");
-      const currentLocalList = stored ? JSON.parse(stored) : [];
-      localStorage.setItem("apparel_orders", JSON.stringify([localBackup, ...currentLocalList]));
-    } catch (localErr) {
-      console.error("Failed to back up order in local storage:", localErr);
-    }
-
-    // Success flow (triggered whether it saved to Supabase or successfully fell back locally!)
-    setCheckoutSuccess(true);
-    setShowStripeCheckout(false);
-    clearCart();
-    
-    // Reset inputs
-    setCardNumber("");
-    setCardExpiry("");
-    setCardCvc("");
-    setCardName("");
-    setUpiId("");
-
-    setTimeout(() => {
-      setCheckoutSuccess(false);
-      setIsCheckingOut(false);
-      setCustomerName("");
-      setCustomerPhone("");
-      setCustomerAddress("");
-      setCustomerCity("");
-      setCustomerZip("");
+      setCouponError("Failed to validate coupon code.");
       setAppliedDiscount(0);
-      setCouponCode("");
-      onClose();
-      setIsSubmittingOrder(false);
-    }, 5000);
+    }
   };
+
+  const loadRazorpayScript = () => {
+    return new Promise((resolve) => {
+      if (window.Razorpay) {
+        resolve(true);
+        return;
+      }
+      const script = document.createElement("script");
+      script.src = "https://checkout.razorpay.com/v1/checkout.js";
+      script.async = true;
+      script.onload = () => resolve(true);
+      script.onerror = () => resolve(false);
+      document.body.appendChild(script);
+    });
+  };
+
+  const handlePlaceOrder = async (e) => {
+    e.preventDefault();
+    if (cart.length === 0) return;
+
+    // Form Validation Checks
+    const errors = {};
+    const nameClean = customerName.trim();
+    const phoneClean = customerPhone.trim();
+    const addressClean = customerAddress.trim();
+    const cityClean = customerCity.trim();
+    const zipClean = customerZip.trim();
+
+    if (!nameClean) {
+      errors.name = "Recipient name is required.";
+    } else if (nameClean.length < 3) {
+      errors.name = "Name must be at least 3 characters.";
+    } else if (!/^[a-zA-Z\s]+$/.test(nameClean)) {
+      errors.name = "Name can only contain letters.";
+    }
+
+    if (!phoneClean) {
+      errors.phone = "Phone number is required.";
+    } else if (!/^\d{10}$/.test(phoneClean.replace(/\D/g, ""))) {
+      errors.phone = "Phone number must be exactly 10 digits.";
+    }
+
+    if (!addressClean) {
+      errors.address = "Street address is required.";
+    } else if (addressClean.length < 5) {
+      errors.address = "Please enter a complete address (minimum 5 characters).";
+    }
+
+    if (!cityClean) {
+      errors.city = "City is required.";
+    } else if (cityClean.length < 2) {
+      errors.city = "City must be at least 2 characters.";
+    }
+
+    if (!zipClean) {
+      errors.zip = "Postal/ZIP code is required.";
+    } else if (!/^\d{6}$/.test(zipClean.replace(/\D/g, ""))) {
+      errors.zip = "PIN code must be exactly 6 digits.";
+    }
+
+    setFormErrors(errors);
+    if (Object.keys(errors).length > 0) {
+      return;
+    }
+
+    // Save session details to localStorage
+    const checkoutSession = {
+      cart,
+      shippingDetails: {
+        name: nameClean,
+        phone: phoneClean,
+        address: addressClean,
+        city: cityClean,
+        zip: zipClean
+      },
+      couponCode,
+      subtotal,
+      discountAmount,
+      deliveryFee,
+      finalTotalAmount
+    };
+
+    localStorage.setItem("apparel_checkout_session", JSON.stringify(checkoutSession));
+    onClose();
+    window.location.href = "/checkout/payment";
+  };
+
 
   const getShippingDetails = (zip) => {
     const cleanZip = (zip || "").trim().replace(/\D/g, "");
@@ -272,12 +285,12 @@ export default function CartDrawer({ isOpen, onClose }) {
   const deliveryFee = isCheckingOut ? shippingInfo.fee : 0;
   const finalTotalAmount = Math.max(0, subtotal - discountAmount + deliveryFee);
 
-  if (!isOpen && !showStripeCheckout && !checkoutSuccess) return null;
+  if (!isOpen && !checkoutSuccess) return null;
 
   return (
     <>
       {/* Modern Slide-out Shopping Cart Drawer */}
-      {isOpen && !showStripeCheckout && !checkoutSuccess && (
+      {isOpen && !checkoutSuccess && (
         <div className="fixed inset-0 z-50 overflow-hidden">
           <div onClick={onClose} className="absolute inset-0 bg-black/60 backdrop-blur-sm transition-opacity" />
           <div className="absolute inset-y-0 right-0 max-w-md w-full flex">
@@ -314,24 +327,84 @@ export default function CartDrawer({ isOpen, onClose }) {
                     </div>
                     <div>
                       <label className="block text-sm font-semibold text-zinc-400 uppercase tracking-wider mb-2">Recipient Name</label>
-                      <input type="text" required value={customerName} onChange={(e) => setCustomerName(e.target.value)} className="w-full bg-zinc-900/60 border border-zinc-800 rounded-lg px-3.5 py-2 text-xs text-white placeholder-zinc-600 focus:outline-none focus:border-indigo-500" />
+                      <input 
+                        type="text" 
+                        required 
+                        value={customerName} 
+                        onChange={(e) => {
+                          setCustomerName(e.target.value);
+                          if (formErrors.name) setFormErrors(prev => ({ ...prev, name: null }));
+                        }} 
+                        className={`w-full bg-zinc-900/60 border rounded-lg px-3.5 py-2 text-xs text-white placeholder-zinc-600 focus:outline-none ${formErrors.name ? "border-red-500/80 focus:border-red-500" : "border-zinc-850 focus:border-indigo-500"}`} 
+                      />
+                      {formErrors.name && (
+                        <p className="text-[10px] text-red-400 mt-1 font-medium select-none">{formErrors.name}</p>
+                      )}
                     </div>
                     <div>
                       <label className="block text-sm font-semibold text-zinc-400 uppercase tracking-wider mb-2">Contact Phone</label>
-                      <input type="tel" required value={customerPhone} onChange={(e) => setCustomerPhone(e.target.value)} className="w-full bg-zinc-900/60 border border-zinc-800 rounded-lg px-3.5 py-2 text-xs text-white placeholder-zinc-600 focus:outline-none focus:border-indigo-500" />
+                      <input 
+                        type="tel" 
+                        required 
+                        value={customerPhone} 
+                        onChange={(e) => {
+                          setCustomerPhone(e.target.value);
+                          if (formErrors.phone) setFormErrors(prev => ({ ...prev, phone: null }));
+                        }} 
+                        className={`w-full bg-zinc-900/60 border rounded-lg px-3.5 py-2 text-xs text-white placeholder-zinc-600 focus:outline-none ${formErrors.phone ? "border-red-500/80 focus:border-red-500" : "border-zinc-850 focus:border-indigo-500"}`} 
+                      />
+                      {formErrors.phone && (
+                        <p className="text-[10px] text-red-400 mt-1 font-medium select-none">{formErrors.phone}</p>
+                      )}
                     </div>
                     <div>
                       <label className="block text-sm font-semibold text-zinc-400 uppercase tracking-wider mb-2">Street Address</label>
-                      <input type="text" required value={customerAddress} onChange={(e) => setCustomerAddress(e.target.value)} className="w-full bg-zinc-900/60 border border-zinc-800 rounded-lg px-3.5 py-2 text-xs text-white placeholder-zinc-600 focus:outline-none focus:border-indigo-500" />
+                      <input 
+                        type="text" 
+                        required 
+                        value={customerAddress} 
+                        onChange={(e) => {
+                          setCustomerAddress(e.target.value);
+                          if (formErrors.address) setFormErrors(prev => ({ ...prev, address: null }));
+                        }} 
+                        className={`w-full bg-zinc-900/60 border rounded-lg px-3.5 py-2 text-xs text-white placeholder-zinc-600 focus:outline-none ${formErrors.address ? "border-red-500/80 focus:border-red-500" : "border-zinc-850 focus:border-indigo-500"}`} 
+                      />
+                      {formErrors.address && (
+                        <p className="text-[10px] text-red-400 mt-1 font-medium select-none">{formErrors.address}</p>
+                      )}
                     </div>
                     <div className="grid grid-cols-2 gap-4">
                       <div>
                         <label className="block text-sm font-semibold text-zinc-400 uppercase tracking-wider mb-2">City / Region</label>
-                        <input type="text" required value={customerCity} onChange={(e) => setCustomerCity(e.target.value)} className="w-full bg-zinc-900/60 border border-zinc-800 rounded-lg px-3.5 py-2 text-xs text-white placeholder-zinc-600 focus:outline-none focus:border-indigo-500" />
+                        <input 
+                          type="text" 
+                          required 
+                          value={customerCity} 
+                          onChange={(e) => {
+                            setCustomerCity(e.target.value);
+                            if (formErrors.city) setFormErrors(prev => ({ ...prev, city: null }));
+                          }} 
+                          className={`w-full bg-zinc-900/60 border rounded-lg px-3.5 py-2 text-xs text-white placeholder-zinc-600 focus:outline-none ${formErrors.city ? "border-red-500/80 focus:border-red-500" : "border-zinc-850 focus:border-indigo-500"}`} 
+                        />
+                        {formErrors.city && (
+                          <p className="text-[10px] text-red-400 mt-1 font-medium select-none">{formErrors.city}</p>
+                        )}
                       </div>
                       <div>
                         <label className="block text-sm font-semibold text-zinc-400 uppercase tracking-wider mb-2">Postal / ZIP</label>
-                        <input type="text" required value={customerZip} onChange={(e) => setCustomerZip(e.target.value)} className="w-full bg-zinc-900/60 border border-zinc-800 rounded-lg px-3.5 py-2 text-xs text-white placeholder-zinc-600 focus:outline-none focus:border-indigo-500" />
+                        <input 
+                          type="text" 
+                          required 
+                          value={customerZip} 
+                          onChange={(e) => {
+                            setCustomerZip(e.target.value);
+                            if (formErrors.zip) setFormErrors(prev => ({ ...prev, zip: null }));
+                          }} 
+                          className={`w-full bg-zinc-900/60 border rounded-lg px-3.5 py-2 text-xs text-white placeholder-zinc-600 focus:outline-none ${formErrors.zip ? "border-red-500/80 focus:border-red-500" : "border-zinc-850 focus:border-indigo-500"}`} 
+                        />
+                        {formErrors.zip && (
+                          <p className="text-[10px] text-red-400 mt-1 font-medium select-none">{formErrors.zip}</p>
+                        )}
                       </div>
                     </div>
                     {customerZip.trim().length >= 2 && (
@@ -439,148 +512,6 @@ export default function CartDrawer({ isOpen, onClose }) {
                   </button>
                 </div>
               )}
-            </div>
-          </div>
-        </div>
-      )}
-
-      {/* Premium Full-Screen Stripe Payment Gateway Overlay */}
-      {showStripeCheckout && (
-        <div className="fixed inset-0 z-50 bg-zinc-950 flex flex-col md:flex-row overflow-y-auto">
-          <button onClick={() => setShowStripeCheckout(false)} className="absolute top-6 left-6 flex items-center gap-2 text-zinc-500 hover:text-white transition-colors cursor-pointer text-xs font-semibold z-20">
-            <X className="w-4 h-4" /><span>Cancel payment & Return</span>
-          </button>
-          <div className="w-full md:w-1/2 bg-zinc-900/40 border-r border-zinc-900 p-8 md:p-16 flex flex-col justify-between min-h-[300px] md:min-h-screen">
-            <div className="space-y-8 mt-8">
-              <div className="space-y-2">
-                <h2 className="text-3xl font-extrabold text-white tracking-tight">Thread 3D Store</h2>
-                <div className="text-4xl font-black text-indigo-400 font-mono">₹{finalTotalAmount.toLocaleString('en-IN')}</div>
-              </div>
-              <div className="space-y-4 pt-4 border-t border-zinc-900/60 max-h-60 overflow-y-auto pr-2">
-                {cart.map((item) => (
-                  <div key={item.id} className="flex items-center gap-4 bg-zinc-950/40 p-3 rounded-xl border border-zinc-900/60">
-                    <img src={item.thumbnailUrl || item.customDesignUrl} alt={item.name} className="w-12 h-12 rounded-lg border border-zinc-800 object-cover bg-zinc-900" />
-                    <div className="flex-1 min-w-0">
-                      <h4 className="font-extrabold text-xs text-white truncate">{item.name}</h4>
-                      <p className="text-sm text-zinc-500 mt-0.5">Size: <span className="text-zinc-300 font-bold">{item.size}</span> • Qty: <span className="text-zinc-300 font-bold">{item.quantity}</span></p>
-                    </div>
-                  </div>
-                ))}
-              </div>
-            </div>
-            <div className="space-y-4 mt-8 pt-6 border-t border-zinc-900/60">
-              <div className="flex items-center gap-3 text-zinc-500"><ShieldCheck className="w-5 h-5 text-indigo-400 shrink-0" /><span className="text-sm leading-relaxed">Guaranteed safe and secure checkouts.</span></div>
-            </div>
-          </div>
-          <div className="w-full md:w-1/2 p-8 md:p-16 flex flex-col justify-center bg-zinc-950 relative min-h-[450px]">
-            <div className="max-w-md w-full mx-auto space-y-6">
-              <div className="flex bg-zinc-900/60 p-1.5 rounded-xl border border-zinc-900">
-                <button type="button" onClick={() => setPaymentMethod("card")} className={`flex-1 py-2 text-center text-xs font-extrabold rounded-lg transition-all cursor-pointer ${paymentMethod === "card" ? "bg-indigo-600 text-white shadow-lg" : "text-zinc-400 hover:text-white"}`}>Credit Card</button>
-                <button type="button" onClick={() => setPaymentMethod("upi")} className={`flex-1 py-2 text-center text-xs font-extrabold rounded-lg transition-all cursor-pointer ${paymentMethod === "upi" ? "bg-indigo-600 text-white shadow-lg" : "text-zinc-400 hover:text-white"}`}>UPI / Netbanking</button>
-              </div>
-              <div className="bg-zinc-900/40 border border-zinc-800 p-6 rounded-2xl space-y-4 font-sans text-left">
-                {paymentMethod === "card" ? (
-                  <div className="space-y-4">
-                    <span className="text-xs font-bold text-zinc-400 uppercase tracking-widest block select-none">Card Information</span>
-                    
-                    <div>
-                      <label className="block text-[10px] font-bold text-zinc-500 uppercase tracking-widest mb-1.5 select-none">Cardholder Name</label>
-                      <input 
-                        type="text"
-                        value={cardName}
-                        onChange={(e) => setCardName(e.target.value)}
-                        placeholder="e.g. John Doe"
-                        className="w-full bg-zinc-950 border border-zinc-800 rounded-lg px-3.5 py-2 text-xs text-white placeholder-zinc-700 focus:outline-none focus:border-indigo-500 font-sans"
-                        required
-                      />
-                    </div>
-
-                    <div>
-                      <label className="block text-[10px] font-bold text-zinc-500 uppercase tracking-widest mb-1.5 select-none">Card Number</label>
-                      <input 
-                        type="text"
-                        value={cardNumber}
-                        onChange={(e) => {
-                          const val = e.target.value.replace(/\D/g, "").substring(0, 16);
-                          const formatted = val.replace(/(\d{4})(?=\d)/g, "$1 ");
-                          setCardNumber(formatted);
-                        }}
-                        placeholder="4242 4242 4242 4242"
-                        className="w-full bg-zinc-950 border border-zinc-800 rounded-lg px-3.5 py-2 text-xs text-white placeholder-zinc-700 focus:outline-none focus:border-indigo-500 font-mono"
-                        required
-                      />
-                    </div>
-
-                    <div className="grid grid-cols-2 gap-4">
-                      <div>
-                        <label className="block text-[10px] font-bold text-zinc-500 uppercase tracking-widest mb-1.5 select-none">Expiration Date</label>
-                        <input 
-                          type="text"
-                          value={cardExpiry}
-                          onChange={(e) => {
-                            const val = e.target.value.replace(/\D/g, "").substring(0, 4);
-                            if (val.length >= 2) {
-                              setCardExpiry(`${val.substring(0, 2)}/${val.substring(2, 4)}`);
-                            } else {
-                              setCardExpiry(val);
-                            }
-                          }}
-                          placeholder="MM/YY"
-                          className="w-full bg-zinc-950 border border-zinc-800 rounded-lg px-3.5 py-2 text-xs text-white placeholder-zinc-700 focus:outline-none focus:border-indigo-500 font-mono"
-                          required
-                        />
-                      </div>
-                      <div>
-                        <label className="block text-[10px] font-bold text-zinc-500 uppercase tracking-widest mb-1.5 select-none">CVC / CVV</label>
-                        <input 
-                          type="password"
-                          value={cardCvc}
-                          onChange={(e) => setCardCvc(e.target.value.replace(/\D/g, "").substring(0, 3))}
-                          placeholder="•••"
-                          className="w-full bg-zinc-950 border border-zinc-800 rounded-lg px-3.5 py-2 text-xs text-white placeholder-zinc-700 focus:outline-none focus:border-indigo-500 font-mono"
-                          required
-                        />
-                      </div>
-                    </div>
-                  </div>
-                ) : (
-                  <div className="space-y-4">
-                    <span className="text-xs font-bold text-zinc-400 uppercase tracking-widest block select-none">UPI Payment Details</span>
-                    <div>
-                      <label className="block text-[10px] font-bold text-zinc-500 uppercase tracking-widest mb-1.5 select-none">Virtual Payment Address (VPA)</label>
-                      <input 
-                        type="text"
-                        value={upiId}
-                        onChange={(e) => setUpiId(e.target.value)}
-                        placeholder="e.g. john@okaxis"
-                        className="w-full bg-zinc-950 border border-zinc-800 rounded-lg px-3.5 py-2 text-xs text-white placeholder-zinc-700 focus:outline-none focus:border-indigo-500 font-mono"
-                        required
-                      />
-                      <p className="text-[10px] text-zinc-600 mt-2.5 leading-normal">Submit your UPI ID to trigger a simulated checkout notification request on your banking app device.</p>
-                    </div>
-                  </div>
-                )}
-
-                <div className="pt-2">
-                  <button 
-                    onClick={() => {
-                      if (paymentMethod === "card" && (!cardName.trim() || !cardNumber.trim() || !cardExpiry.trim() || !cardCvc.trim())) {
-                        alert("Please fill in all credit card payment details.");
-                        return;
-                      }
-                      if (paymentMethod === "upi" && !upiId.trim()) {
-                        alert("Please provide your VPA / UPI ID.");
-                        return;
-                      }
-                      executeOrderPlacement(paymentMethod);
-                    }} 
-                    disabled={isSubmittingOrder} 
-                    className="w-full bg-indigo-600 hover:bg-indigo-500 text-white font-bold py-3.5 px-4 rounded-xl transition-all flex items-center justify-center gap-2 cursor-pointer"
-                  >
-                    {isSubmittingOrder ? <Loader2 className="w-4 h-4 animate-spin" /> : <span>Pay ₹{finalTotalAmount.toLocaleString('en-IN')} securely</span>}
-                  </button>
-                </div>
-              </div>
             </div>
           </div>
         </div>

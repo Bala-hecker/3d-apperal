@@ -25,9 +25,21 @@ import {
   X,
   Edit,
   ShieldAlert,
-  Plus
+  Plus,
+  Key,
+  Lock,
+  Copy,
+  Check,
+  Settings,
+  MessageSquare,
+  TrendingUp,
+  TrendingDown,
+  Calendar,
+  Percent,
+  Coins
 } from "lucide-react";
 import Link from "next/link";
+import { FileText, Printer } from "lucide-react";
 import Navbar from "@/components/Navbar";
 import * as THREE from "three";
 import { GLTFLoader } from "three/examples/jsm/loaders/GLTFLoader.js";
@@ -109,6 +121,741 @@ const isTemplateProduct = (p) => {
   return false;
 };
 
+// -------------------------------------------------------------
+// SALES ANALYTICS & STATS DASHBOARD COMPONENT
+// -------------------------------------------------------------
+function SalesStatsView({ orders }) {
+  const [timeframe, setTimeframe] = useState("weekly");
+  const [customStart, setCustomStart] = useState("");
+  const [customEnd, setCustomEnd] = useState("");
+  const [useDemoData, setUseDemoData] = useState(false);
+  const [demoOrders, setDemoOrders] = useState([]);
+
+  // Generate realistic demo orders once when requested
+  useEffect(() => {
+    if (useDemoData && demoOrders.length === 0) {
+      const generated = [];
+      const now = new Date();
+      const productTemplates = [
+        { name: "Thread 3D Classic Tee", price: 3999, category: "t-shirt" },
+        { name: "Neon Aero Jersey", price: 4499, category: "jersey" },
+        { name: "Retro Classic Jersey", price: 4299, category: "jersey" },
+        { name: "Prismatic Hoodie", price: 5999, category: "hoodie" }
+      ];
+      
+      const customNames = ["AVIS", "BALA", "JORDAN", "MESSI", "CR7", "PABLO", "VIRAT", "DHONI"];
+      
+      // Generate 80 orders spread over last 365 days
+      for (let i = 0; i < 80; i++) {
+        // Random date between now and 365 days ago
+        const dateOffset = Math.random() * 365 * 24 * 60 * 60 * 1000;
+        const createdDate = new Date(now.getTime() - dateOffset);
+        
+        // Random items (1 to 3 items)
+        const itemCount = Math.floor(Math.random() * 2) + 1;
+        const items = [];
+        let orderSubtotal = 0;
+        
+        for (let j = 0; j < itemCount; j++) {
+          const prod = productTemplates[Math.floor(Math.random() * productTemplates.length)];
+          const qty = Math.floor(Math.random() * 2) + 1;
+          const isCustom = Math.random() > 0.5;
+          
+          items.push({
+            id: `prod_${j}_${i}`,
+            name: prod.name,
+            price: prod.price,
+            quantity: qty,
+            size: ["S", "M", "L", "XL"][Math.floor(Math.random() * 4)],
+            customName: isCustom ? customNames[Math.floor(Math.random() * customNames.length)] : null,
+            customNumber: isCustom ? String(Math.floor(Math.random() * 99) + 1) : null
+          });
+          orderSubtotal += prod.price * qty;
+        }
+
+        const deliveryFee = orderSubtotal > 5000 ? 0 : 199;
+        const discountAmount = Math.random() > 0.7 ? Math.round(orderSubtotal * 0.1) : 0;
+        const totalAmount = orderSubtotal - discountAmount + deliveryFee;
+
+        generated.push({
+          id: `demo_ord_${i}_${createdDate.getTime()}`,
+          created_at: createdDate.toISOString(),
+          total_amount: totalAmount,
+          status: Math.random() > 0.15 ? "delivered" : "processing",
+          items,
+          shipping_details: {
+            name: `Customer ${i + 1}`,
+            phone: `987654${String(i).padStart(4, "0")}`,
+            address: `${Math.floor(Math.random() * 500) + 1} Park Street`,
+            city: ["Chennai", "Coimbatore", "Bangalore", "Mumbai"][Math.floor(Math.random() * 4)],
+            zip: "600001"
+          }
+        });
+      }
+      setDemoOrders(generated);
+    }
+  }, [useDemoData, demoOrders.length]);
+
+  const activeOrders = useDemoData ? demoOrders : orders;
+
+  // Calculate Date boundaries
+  const now = new Date();
+  let currentStart, currentEnd, prevStart, prevEnd;
+
+  if (timeframe === "daily") {
+    currentStart = new Date(now.getFullYear(), now.getMonth(), now.getDate(), 0, 0, 0);
+    currentEnd = new Date(now.getFullYear(), now.getMonth(), now.getDate(), 23, 59, 59);
+    prevStart = new Date(currentStart.getTime() - 24 * 60 * 60 * 1000);
+    prevEnd = new Date(currentEnd.getTime() - 24 * 60 * 60 * 1000);
+  } else if (timeframe === "weekly") {
+    currentStart = new Date(now.getTime() - 7 * 24 * 60 * 60 * 1000);
+    currentEnd = now;
+    prevStart = new Date(currentStart.getTime() - 7 * 24 * 60 * 60 * 1000);
+    prevEnd = currentStart;
+  } else if (timeframe === "monthly") {
+    currentStart = new Date(now.getTime() - 30 * 24 * 60 * 60 * 1000);
+    currentEnd = now;
+    prevStart = new Date(currentStart.getTime() - 30 * 24 * 60 * 60 * 1000);
+    prevEnd = currentStart;
+  } else if (timeframe === "yearly") {
+    currentStart = new Date(now.getTime() - 365 * 24 * 60 * 60 * 1000);
+    currentEnd = now;
+    prevStart = new Date(currentStart.getTime() - 365 * 24 * 60 * 60 * 1000);
+    prevEnd = currentStart;
+  } else {
+    // Custom
+    currentStart = customStart ? new Date(customStart) : new Date(now.getTime() - 30 * 24 * 60 * 60 * 1000);
+    currentEnd = customEnd ? new Date(customEnd + "T23:59:59") : now;
+    const diff = currentEnd.getTime() - currentStart.getTime();
+    prevStart = new Date(currentStart.getTime() - diff);
+    prevEnd = currentStart;
+  }
+
+  // Calculate Metrics helper
+  const getPeriodStats = (ordersList, start, end) => {
+    const filtered = ordersList.filter(o => {
+      if (o.status === "cancelled") return false;
+      const d = new Date(o.created_at);
+      return d >= start && d <= end;
+    });
+
+    const revenue = filtered.reduce((sum, o) => sum + (Number(o.total_amount) || 0), 0);
+    const count = filtered.length;
+    const aov = count > 0 ? revenue / count : 0;
+    
+    let units = 0;
+    filtered.forEach(o => {
+      if (Array.isArray(o.items)) {
+        o.items.forEach(item => {
+          units += (Number(item.quantity) || 1);
+        });
+      }
+    });
+
+    return { revenue, count, aov, units, orders: filtered };
+  };
+
+  const currentStats = getPeriodStats(activeOrders, currentStart, currentEnd);
+  const prevStats = getPeriodStats(activeOrders, prevStart, prevEnd);
+
+  const getGrowth = (current, prev) => {
+    if (prev === 0) return current > 0 ? 100 : 0;
+    return ((current - prev) / prev) * 100;
+  };
+
+  // Generate SVG Points
+  let points = [];
+  if (timeframe === "daily") {
+    points = Array.from({ length: 24 }, (_, i) => {
+      const hourStart = new Date(currentStart.getTime() + i * 60 * 60 * 1000);
+      const hourEnd = new Date(hourStart.getTime() + 59 * 60 * 1000 + 59000);
+      const stats = getPeriodStats(activeOrders, hourStart, hourEnd);
+      return {
+        label: `${i}:00`,
+        value: stats.revenue,
+        count: stats.count
+      };
+    });
+  } else if (timeframe === "weekly") {
+    points = Array.from({ length: 7 }, (_, i) => {
+      const dayStart = new Date(currentStart.getTime() + i * 24 * 60 * 60 * 1000);
+      dayStart.setHours(0, 0, 0, 0);
+      const dayEnd = new Date(dayStart.getTime() + 23 * 60 * 60 * 1000 + 59 * 60 * 1000 + 59000);
+      const stats = getPeriodStats(activeOrders, dayStart, dayEnd);
+      return {
+        label: dayStart.toLocaleDateString("en-IN", { weekday: "short" }),
+        value: stats.revenue,
+        count: stats.count
+      };
+    });
+  } else if (timeframe === "monthly") {
+    points = Array.from({ length: 30 }, (_, i) => {
+      const dayStart = new Date(currentStart.getTime() + i * 24 * 60 * 60 * 1000);
+      dayStart.setHours(0, 0, 0, 0);
+      const dayEnd = new Date(dayStart.getTime() + 23 * 60 * 60 * 1000 + 59 * 60 * 1000 + 59000);
+      const stats = getPeriodStats(activeOrders, dayStart, dayEnd);
+      return {
+        label: dayStart.toLocaleDateString("en-IN", { month: "short", day: "numeric" }),
+        value: stats.revenue,
+        count: stats.count
+      };
+    });
+  } else if (timeframe === "yearly") {
+    points = Array.from({ length: 12 }, (_, i) => {
+      const blockStart = new Date(currentStart.getTime() + i * (365 / 12) * 24 * 60 * 60 * 1000);
+      const blockEnd = new Date(blockStart.getTime() + (365 / 12) * 24 * 60 * 60 * 1000);
+      const stats = getPeriodStats(activeOrders, blockStart, blockEnd);
+      return {
+        label: blockStart.toLocaleDateString("en-IN", { month: "short" }),
+        value: stats.revenue,
+        count: stats.count
+      };
+    });
+  } else {
+    // Custom
+    const intervalsCount = 10;
+    const duration = currentEnd.getTime() - currentStart.getTime();
+    const intervalLength = duration / intervalsCount;
+    points = Array.from({ length: intervalsCount }, (_, i) => {
+      const blockStart = new Date(currentStart.getTime() + i * intervalLength);
+      const blockEnd = new Date(blockStart.getTime() + intervalLength);
+      const stats = getPeriodStats(activeOrders, blockStart, blockEnd);
+      return {
+        label: blockStart.toLocaleDateString("en-IN", { month: "short", day: "numeric" }),
+        value: stats.revenue,
+        count: stats.count
+      };
+    });
+  }
+
+  // Draw SVG
+  const width = 600;
+  const height = 240;
+  const paddingLeft = 60;
+  const paddingRight = 20;
+  const paddingTop = 20;
+  const paddingBottom = 40;
+
+  const maxValue = Math.max(...points.map(p => p.value), 1000);
+  const gridLines = Array.from({ length: 5 }, (_, i) => {
+    const val = (maxValue / 4) * i;
+    const y = height - paddingBottom - (val / maxValue) * (height - paddingTop - paddingBottom);
+    return { y, value: val };
+  });
+
+  const getCoordinates = () => {
+    return points.map((p, index) => {
+      const x = paddingLeft + (index / (points.length - 1)) * (width - paddingLeft - paddingRight);
+      const y = height - paddingBottom - (p.value / maxValue) * (height - paddingTop - paddingBottom);
+      return { x, y, ...p };
+    });
+  };
+
+  const coords = getCoordinates();
+  let linePath = "";
+  let areaPath = "";
+
+  if (coords.length > 0) {
+    linePath = `M ${coords[0].x} ${coords[0].y} ` + coords.slice(1).map(c => `L ${c.x} ${c.y}`).join(" ");
+    areaPath = linePath + ` L ${coords[coords.length - 1].x} ${height - paddingBottom} L ${coords[0].x} ${height - paddingBottom} Z`;
+  }
+
+  const labelStep = points.length > 15 ? 5 : points.length > 7 ? 2 : 1;
+
+  // Calculate Product Leaderboard
+  const productLeaderboard = {};
+  let totalPersonalized = 0;
+  let totalStandard = 0;
+
+  currentStats.orders.forEach(o => {
+    if (Array.isArray(o.items)) {
+      o.items.forEach(item => {
+        const qty = Number(item.quantity) || 1;
+        const revenue = (Number(item.price) || 3999) * qty;
+        
+        if (item.customName || item.customNumber) {
+          totalPersonalized += qty;
+        } else {
+          totalStandard += qty;
+        }
+
+        if (!productLeaderboard[item.name]) {
+          productLeaderboard[item.name] = {
+            name: item.name,
+            qty: 0,
+            revenue: 0,
+            sizes: {}
+          };
+        }
+        productLeaderboard[item.name].qty += qty;
+        productLeaderboard[item.name].revenue += revenue;
+        
+        const sz = item.size || "M";
+        productLeaderboard[item.name].sizes[sz] = (productLeaderboard[item.name].sizes[sz] || 0) + qty;
+      });
+    }
+  });
+
+  const sortedLeaderboard = Object.values(productLeaderboard).sort((a, b) => b.qty - a.qty);
+  const totalGarments = totalPersonalized + totalStandard;
+  const personalizedPercent = totalGarments > 0 ? Math.round((totalPersonalized / totalGarments) * 100) : 0;
+
+  // Calculate Category Sales Distribution
+  const categorySales = {};
+  currentStats.orders.forEach(o => {
+    if (Array.isArray(o.items)) {
+      o.items.forEach(item => {
+        const qty = Number(item.quantity) || 1;
+        const cat = item.category || "t-shirt";
+        categorySales[cat] = (categorySales[cat] || 0) + qty;
+      });
+    }
+  });
+
+  const totalSalesQty = Object.values(categorySales).reduce((sum, q) => sum + q, 0);
+
+  const categoryColors = {
+    "t-shirt": "#6366f1",
+    "jersey": "#ec4899",
+    "hoodie": "#f59e0b",
+    "jacket": "#10b981",
+    "activewear": "#a855f7"
+  };
+
+  return (
+    <div className="space-y-6">
+      {/* Timeframe & Demo Data Controls */}
+      <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 bg-zinc-900/40 border border-zinc-900 rounded-xl p-5">
+        <div className="flex flex-wrap gap-2">
+          {["daily", "weekly", "monthly", "yearly", "custom"].map((t) => (
+            <button
+              key={t}
+              onClick={() => setTimeframe(t)}
+              className={`text-xs font-bold uppercase tracking-wider px-4 py-2 rounded-lg transition-colors cursor-pointer ${
+                timeframe === t
+                  ? "bg-indigo-600 text-white shadow-md shadow-indigo-600/10"
+                  : "bg-zinc-950 border border-zinc-850 text-zinc-400 hover:text-white"
+              }`}
+            >
+              {t}
+            </button>
+          ))}
+        </div>
+
+        <div className="flex items-center gap-3">
+          {/* Demo Data Toggle */}
+          <div className="flex items-center gap-2 bg-zinc-950 border border-zinc-850 px-3 py-1.5 rounded-lg select-none">
+            <span className="text-[10px] font-bold text-zinc-500 uppercase tracking-widest">Demo Data Mode</span>
+            <button
+              onClick={() => setUseDemoData(!useDemoData)}
+              className={`w-9 h-5 flex items-center rounded-full p-0.5 cursor-pointer transition-colors ${
+                useDemoData ? "bg-emerald-500 justify-end" : "bg-zinc-800 justify-start"
+              }`}
+            >
+              <span className="w-3.5 h-3.5 bg-white rounded-full shadow" />
+            </button>
+          </div>
+        </div>
+      </div>
+
+      {/* Custom Date Inputs */}
+      {timeframe === "custom" && (
+        <div className="grid grid-cols-2 md:grid-cols-4 gap-4 bg-zinc-900/20 border border-zinc-900 p-5 rounded-xl text-xs">
+          <div className="space-y-1">
+            <span className="text-[10px] font-bold text-zinc-500 uppercase tracking-wider block">Start Date</span>
+            <input
+              type="date"
+              value={customStart}
+              onChange={(e) => setCustomStart(e.target.value)}
+              className="w-full bg-zinc-950 border border-zinc-850 rounded-lg px-3 py-2 text-white focus:outline-none focus:border-indigo-500 font-mono text-xs"
+            />
+          </div>
+          <div className="space-y-1">
+            <span className="text-[10px] font-bold text-zinc-500 uppercase tracking-wider block">End Date</span>
+            <input
+              type="date"
+              value={customEnd}
+              onChange={(e) => setCustomEnd(e.target.value)}
+              className="w-full bg-zinc-950 border border-zinc-850 rounded-lg px-3 py-2 text-white focus:outline-none focus:border-indigo-500 font-mono text-xs"
+            />
+          </div>
+        </div>
+      )}
+
+      {/* KPI Cards Grid */}
+      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
+        {/* KPI 1: Gross Sales */}
+        <div className="bg-zinc-900 border border-zinc-850 rounded-2xl p-5 space-y-2 relative overflow-hidden">
+          <div className="absolute top-0 right-0 w-16 h-16 bg-indigo-500/5 rounded-full filter blur-xl" />
+          <div className="flex justify-between items-center text-zinc-500">
+            <span className="text-[10px] font-extrabold uppercase tracking-widest">Gross Sales</span>
+            <DollarSign className="w-4 h-4 text-indigo-400" />
+          </div>
+          <div className="text-xl font-black text-white font-mono">
+            ₹{currentStats.revenue.toLocaleString('en-IN')}
+          </div>
+          <div className="flex items-center gap-1 text-[10px]">
+            {getGrowth(currentStats.revenue, prevStats.revenue) >= 0 ? (
+              <span className="text-emerald-400 font-extrabold flex items-center gap-0.5">
+                <TrendingUp className="w-3.5 h-3.5" />
+                +{getGrowth(currentStats.revenue, prevStats.revenue).toFixed(1)}%
+              </span>
+            ) : (
+              <span className="text-rose-400 font-extrabold flex items-center gap-0.5">
+                <TrendingDown className="w-3.5 h-3.5" />
+                {getGrowth(currentStats.revenue, prevStats.revenue).toFixed(1)}%
+              </span>
+            )}
+            <span className="text-zinc-500 font-semibold select-none">vs prev period</span>
+          </div>
+        </div>
+
+        {/* KPI 2: Total Orders */}
+        <div className="bg-zinc-900 border border-zinc-850 rounded-2xl p-5 space-y-2 relative overflow-hidden">
+          <div className="absolute top-0 right-0 w-16 h-16 bg-purple-500/5 rounded-full filter blur-xl" />
+          <div className="flex justify-between items-center text-zinc-500">
+            <span className="text-[10px] font-extrabold uppercase tracking-widest">Orders Count</span>
+            <ShoppingBag className="w-4 h-4 text-purple-400" />
+          </div>
+          <div className="text-xl font-black text-white font-mono">
+            {currentStats.count}
+          </div>
+          <div className="flex items-center gap-1 text-[10px]">
+            {getGrowth(currentStats.count, prevStats.count) >= 0 ? (
+              <span className="text-emerald-400 font-extrabold flex items-center gap-0.5">
+                <TrendingUp className="w-3.5 h-3.5" />
+                +{getGrowth(currentStats.count, prevStats.count).toFixed(1)}%
+              </span>
+            ) : (
+              <span className="text-rose-400 font-extrabold flex items-center gap-0.5">
+                <TrendingDown className="w-3.5 h-3.5" />
+                {getGrowth(currentStats.count, prevStats.count).toFixed(1)}%
+              </span>
+            )}
+            <span className="text-zinc-500 font-semibold select-none">vs prev period</span>
+          </div>
+        </div>
+
+        {/* KPI 3: Average Order Value */}
+        <div className="bg-zinc-900 border border-zinc-850 rounded-2xl p-5 space-y-2 relative overflow-hidden">
+          <div className="absolute top-0 right-0 w-16 h-16 bg-emerald-500/5 rounded-full filter blur-xl" />
+          <div className="flex justify-between items-center text-zinc-500">
+            <span className="text-[10px] font-extrabold uppercase tracking-widest">Average Value (AOV)</span>
+            <Coins className="w-4 h-4 text-emerald-400" />
+          </div>
+          <div className="text-xl font-black text-white font-mono">
+            ₹{Math.round(currentStats.aov).toLocaleString('en-IN')}
+          </div>
+          <div className="flex items-center gap-1 text-[10px]">
+            {getGrowth(currentStats.aov, prevStats.aov) >= 0 ? (
+              <span className="text-emerald-400 font-extrabold flex items-center gap-0.5">
+                <TrendingUp className="w-3.5 h-3.5 text-emerald-400" />
+                +{getGrowth(currentStats.aov, prevStats.aov).toFixed(1)}%
+              </span>
+            ) : (
+              <span className="text-rose-400 font-extrabold flex items-center gap-0.5">
+                <TrendingDown className="w-3.5 h-3.5" />
+                {getGrowth(currentStats.aov, prevStats.aov).toFixed(1)}%
+              </span>
+            )}
+            <span className="text-zinc-500 font-semibold select-none">vs prev period</span>
+          </div>
+        </div>
+
+        {/* KPI 4: Items Sold */}
+        <div className="bg-zinc-900 border border-zinc-850 rounded-2xl p-5 space-y-2 relative overflow-hidden">
+          <div className="absolute top-0 right-0 w-16 h-16 bg-amber-500/5 rounded-full filter blur-xl" />
+          <div className="flex justify-between items-center text-zinc-500">
+            <span className="text-[10px] font-extrabold uppercase tracking-widest">Garments Dispatched</span>
+            <Box className="w-4 h-4 text-amber-400" />
+          </div>
+          <div className="text-xl font-black text-white font-mono">
+            {currentStats.units}
+          </div>
+          <div className="flex items-center gap-1 text-[10px]">
+            {getGrowth(currentStats.units, prevStats.units) >= 0 ? (
+              <span className="text-emerald-400 font-extrabold flex items-center gap-0.5">
+                <TrendingUp className="w-3.5 h-3.5" />
+                +{getGrowth(currentStats.units, prevStats.units).toFixed(1)}%
+              </span>
+            ) : (
+              <span className="text-rose-400 font-extrabold flex items-center gap-0.5">
+                <TrendingDown className="w-3.5 h-3.5" />
+                {getGrowth(currentStats.units, prevStats.units).toFixed(1)}%
+              </span>
+            )}
+            <span className="text-zinc-500 font-semibold select-none">vs prev period</span>
+          </div>
+        </div>
+      </div>
+
+      {/* SVG Chart Area */}
+      <div className="bg-zinc-900 border border-zinc-850 rounded-2xl p-6 space-y-4">
+        <div className="flex justify-between items-center pb-2 border-b border-zinc-850">
+          <span className="text-xs font-bold text-zinc-400 uppercase tracking-widest select-none">Revenue Stream Chart</span>
+          <span className="text-[10px] bg-indigo-500/10 border border-indigo-500/20 text-indigo-400 font-extrabold uppercase tracking-wider px-2 py-0.5 rounded">
+            Linear Projection Mode
+          </span>
+        </div>
+
+        {points.length === 0 ? (
+          <div className="h-60 flex items-center justify-center text-xs text-zinc-500">
+            No transaction records found for this period.
+          </div>
+        ) : (
+          <div className="relative">
+            <svg viewBox={`0 0 ${width} ${height}`} className="w-full h-auto overflow-visible">
+              <defs>
+                <linearGradient id="chart-gradient" x1="0" y1="0" x2="0" y2="1">
+                  <stop offset="0%" stopColor="#6366f1" stopOpacity="0.25" />
+                  <stop offset="100%" stopColor="#6366f1" stopOpacity="0.0" />
+                </linearGradient>
+              </defs>
+
+              {/* Grid Lines */}
+              {gridLines.map((gl, idx) => (
+                <g key={idx}>
+                  <line
+                    x1={paddingLeft}
+                    y1={gl.y}
+                    x2={width - paddingRight}
+                    y2={gl.y}
+                    stroke="#1e1e2f"
+                    strokeDasharray="4,4"
+                    strokeWidth="1"
+                  />
+                  <text
+                    x={paddingLeft - 10}
+                    y={gl.y + 4}
+                    fill="#52525b"
+                    fontSize="9"
+                    fontWeight="bold"
+                    textAnchor="end"
+                    className="font-mono"
+                  >
+                    ₹{Math.round(gl.value).toLocaleString('en-IN')}
+                  </text>
+                </g>
+              ))}
+
+              {/* Area Path */}
+              {areaPath && (
+                <path
+                  d={areaPath}
+                  fill="url(#chart-gradient)"
+                  className="transition-all duration-500 ease-in-out"
+                />
+              )}
+
+              {/* Line Path */}
+              {linePath && (
+                <path
+                  d={linePath}
+                  fill="none"
+                  stroke="#6366f1"
+                  strokeWidth="2.5"
+                  strokeLinecap="round"
+                  className="transition-all duration-500 ease-in-out"
+                />
+              )}
+
+              {/* X Axis Labels */}
+              {coords.map((c, idx) => {
+                if (idx % labelStep !== 0) return null;
+                return (
+                  <text
+                    key={idx}
+                    x={c.x}
+                    y={height - 15}
+                    fill="#52525b"
+                    fontSize="8"
+                    fontWeight="bold"
+                    textAnchor="middle"
+                    className="font-mono select-none"
+                  >
+                    {c.label}
+                  </text>
+                );
+              })}
+
+              {/* Interactive nodes */}
+              {coords.map((c, idx) => (
+                <g key={idx} className="group cursor-pointer">
+                  <circle
+                    cx={c.x}
+                    cy={c.y}
+                    r="4"
+                    fill="#818cf8"
+                    stroke="#09090b"
+                    strokeWidth="1.5"
+                    className="transition-all duration-200 group-hover:r-5 group-hover:fill-white"
+                  />
+                  <title>
+                    {c.label}: ₹{Math.round(c.value).toLocaleString('en-IN')} ({c.count} orders)
+                  </title>
+                </g>
+              ))}
+            </svg>
+          </div>
+        )}
+      </div>
+
+      <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
+        {/* Product Sales table (Left/Middle) */}
+        <div className="lg:col-span-2 bg-zinc-900 border border-zinc-850 rounded-2xl p-6 space-y-4">
+          <span className="text-xs font-bold text-zinc-400 uppercase tracking-widest block select-none">Garment Leaderboard</span>
+          
+          {sortedLeaderboard.length === 0 ? (
+            <div className="text-center py-10 text-xs text-zinc-500">
+              No garments sold in this period.
+            </div>
+          ) : (
+            <div className="overflow-x-auto">
+              <table className="w-full text-xs text-left">
+                <thead>
+                  <tr className="text-zinc-500 font-bold border-b border-zinc-850 uppercase tracking-wider">
+                    <th className="py-2.5">Product Name</th>
+                    <th className="py-2.5 text-center">Qty Sold</th>
+                    <th className="py-2.5 text-right">Revenue</th>
+                    <th className="py-2.5 text-center">Size Metrics</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-zinc-850">
+                  {sortedLeaderboard.map((item, idx) => (
+                    <tr key={idx} className="text-zinc-200 font-medium">
+                      <td className="py-3 font-semibold">{item.name}</td>
+                      <td className="py-3 text-center font-bold font-mono">{item.qty}</td>
+                      <td className="py-3 text-right font-bold font-mono text-indigo-400">
+                        ₹{item.revenue.toLocaleString('en-IN')}
+                      </td>
+                      <td className="py-3 text-center">
+                        <div className="flex justify-center gap-1.5 text-[9px] font-bold">
+                          {Object.entries(item.sizes).map(([sz, count]) => (
+                            <span key={sz} className="bg-zinc-950 border border-zinc-850 text-zinc-400 px-1.5 py-0.5 rounded font-mono">
+                              {sz}:{count}
+                            </span>
+                          ))}
+                        </div>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
+        </div>
+
+        {/* Customization Distribution (Right) */}
+        <div className="bg-zinc-900 border border-zinc-850 rounded-2xl p-6 space-y-6 flex flex-col justify-between">
+          <div className="space-y-4">
+            <span className="text-xs font-bold text-zinc-400 uppercase tracking-widest block select-none">Design Preference</span>
+            
+            <div className="space-y-3 pt-2">
+              <div className="flex justify-between items-center text-xs">
+                <span className="text-zinc-400 font-semibold flex items-center gap-1.5">
+                  <span className="w-2.5 h-2.5 rounded-full bg-indigo-500" />
+                  Customized Jerseys
+                </span>
+                <span className="font-bold font-mono text-white">{totalPersonalized} units</span>
+              </div>
+              <div className="flex justify-between items-center text-xs">
+                <span className="text-zinc-400 font-semibold flex items-center gap-1.5">
+                  <span className="w-2.5 h-2.5 rounded-full bg-zinc-700" />
+                  Standard Blanks
+                </span>
+                <span className="font-bold font-mono text-white">{totalStandard} units</span>
+              </div>
+            </div>
+          </div>
+
+          <div className="space-y-3">
+            {/* Visual Bar Indicator */}
+            <div className="w-full h-3 bg-zinc-950 border border-zinc-850 rounded-full overflow-hidden flex">
+              <div
+                style={{ width: `${personalizedPercent}%` }}
+                className="bg-indigo-500 h-full rounded-l transition-all duration-500"
+              />
+              <div
+                style={{ width: `${100 - personalizedPercent}%` }}
+                className="bg-zinc-850 h-full transition-all duration-500"
+              />
+            </div>
+            
+            <div className="text-[10px] text-zinc-500 text-center leading-relaxed">
+              <span className="text-indigo-400 font-extrabold">{personalizedPercent}%</span> of ordered designs contain customized player names or squad numbers.
+            </div>
+          </div>
+
+          {/* Category Breakdown Donut Chart */}
+          <div className="border-t border-zinc-850 pt-5 space-y-4">
+            <span className="text-xs font-bold text-zinc-400 uppercase tracking-widest block select-none">Category Distribution</span>
+            {totalSalesQty === 0 ? (
+              <div className="text-center py-6 text-zinc-500 text-xs">No category sales in this period.</div>
+            ) : (
+              <div className="flex items-center justify-between gap-4">
+                {/* SVG Donut Circle */}
+                <div className="relative w-20 h-20 shrink-0">
+                  <svg viewBox="0 0 36 36" className="w-full h-full transform -rotate-90">
+                    <circle cx="18" cy="18" r="15.915" fill="none" stroke="#18181b" strokeWidth="3.2" />
+                    {(() => {
+                      let accumulatedPercent = 0;
+                      return Object.entries(categorySales).map(([cat, qty]) => {
+                        const percent = (qty / totalSalesQty) * 100;
+                        const strokeDashArray = `${percent} ${100 - percent}`;
+                        const strokeDashOffset = 100 - accumulatedPercent;
+                        accumulatedPercent += percent;
+                        const color = categoryColors[cat.toLowerCase()] || "#71717a";
+                        return (
+                          <circle
+                            key={cat}
+                            cx="18"
+                            cy="18"
+                            r="15.915"
+                            fill="none"
+                            stroke={color}
+                            strokeWidth="3.2"
+                            strokeDasharray={strokeDashArray}
+                            strokeDashoffset={strokeDashOffset}
+                            className="transition-all duration-500"
+                          />
+                        );
+                      });
+                    })()}
+                  </svg>
+                  <div className="absolute inset-0 flex flex-col items-center justify-center select-none">
+                    <span className="text-xs font-black text-white leading-none">{totalSalesQty}</span>
+                    <span className="text-[7px] font-bold text-zinc-500 uppercase tracking-wider mt-0.5">Units</span>
+                  </div>
+                </div>
+
+                {/* Legend list */}
+                <div className="flex-1 space-y-1.5 text-[10px]">
+                  {Object.entries(categorySales).map(([cat, qty]) => {
+                    const pct = Math.round((qty / totalSalesQty) * 100);
+                    const color = categoryColors[cat.toLowerCase()] || "#71717a";
+                    return (
+                      <div key={cat} className="flex justify-between items-center text-zinc-400">
+                        <span className="flex items-center gap-1.5 capitalize font-semibold">
+                          <span className="w-2 h-2 rounded-full shrink-0" style={{ backgroundColor: color }} />
+                          {cat}
+                        </span>
+                        <span className="font-mono font-bold text-zinc-300">{qty} ({pct}%)</span>
+                      </div>
+                    );
+                  })}
+                </div>
+              </div>
+            )}
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// -------------------------------------------------------------
+// MAIN ADMIN PAGE EXPORT
+// -------------------------------------------------------------
 export default function AdminPage() {
   const router = useRouter();
   const [session, setSession] = useState(null);
@@ -213,6 +960,276 @@ export default function AdminPage() {
   const [orderSearchQuery, setOrderSearchQuery] = useState("");
   const [orderStatusFilter, setOrderStatusFilter] = useState("all");
   const [logSearchQuery, setLogSearchQuery] = useState("");
+  const [logOperatorFilter, setLogOperatorFilter] = useState("");
+  const [logActionFilter, setLogActionFilter] = useState("all");
+  const [logStartDate, setLogStartDate] = useState("");
+  const [logEndDate, setLogEndDate] = useState("");
+
+  // 3D Product Preview Modal State
+  const adminCatalogPreviewRef = useRef(null);
+  const [previewProduct3D, setPreviewProduct3D] = useState(null);
+  const [loading3DPreview, setLoading3DPreview] = useState(false);
+
+  // Invoice view state
+  const [printingInvoiceOrder, setPrintingInvoiceOrder] = useState(null);
+
+  // Razorpay Gateway Settings State
+  const [razorpayKeyId, setRazorpayKeyId] = useState("");
+  const [razorpayKeySecret, setRazorpayKeySecret] = useState("");
+  const [razorpayWebhookSecret, setRazorpayWebhookSecret] = useState("");
+  const [razorpayEnabled, setRazorpayEnabled] = useState(false);
+  const [keySecretConfigured, setKeySecretConfigured] = useState(false);
+  const [webhookSecretConfigured, setWebhookSecretConfigured] = useState(false);
+  const [loadingPaymentSettings, setLoadingPaymentSettings] = useState(false);
+  const [savingPaymentSettings, setSavingPaymentSettings] = useState(false);
+  const [testingPaymentCredentials, setTestingPaymentCredentials] = useState(false);
+
+  // Coupons state variables
+  const [coupons, setCoupons] = useState([]);
+  const [loadingCoupons, setLoadingCoupons] = useState(false);
+  const [couponsFallbackMode, setCouponsFallbackMode] = useState(false);
+  const [couponsFallbackMessage, setCouponsFallbackMessage] = useState("");
+  const [newCouponCode, setNewCouponCode] = useState("");
+  const [newCouponDiscount, setNewCouponDiscount] = useState("");
+  const [newCouponLimit, setNewCouponLimit] = useState("");
+  const [newCouponFirstTime, setNewCouponFirstTime] = useState(false);
+  const [newCouponActive, setNewCouponActive] = useState(true);
+  const [savingCoupon, setSavingCoupon] = useState(false);
+  const [couponFormError, setCouponFormError] = useState("");
+
+  const fetchCoupons = async () => {
+    setLoadingCoupons(true);
+    try {
+      const { data: { session: currentSession } } = await supabase.auth.getSession();
+      const token = currentSession?.access_token;
+      
+      const res = await fetch("/api/coupons", {
+        headers: {
+          "Authorization": `Bearer ${token}`
+        }
+      });
+      const data = await res.json();
+      if (res.ok) {
+        setCoupons(data.coupons || []);
+        setCouponsFallbackMode(!!data.fallbackMode);
+        setCouponsFallbackMessage(data.message || "");
+      } else {
+        console.error("Failed to load coupons:", data.error);
+      }
+    } catch (err) {
+      console.error("Error fetching coupons:", err);
+    } finally {
+      setLoadingCoupons(false);
+    }
+  };
+
+  const handleCreateCoupon = async (e) => {
+    e.preventDefault();
+    setCouponFormError("");
+    if (!newCouponCode.trim()) {
+      setCouponFormError("Coupon code is required");
+      return;
+    }
+    const disc = parseInt(newCouponDiscount);
+    if (isNaN(disc) || disc <= 0 || disc > 100) {
+      setCouponFormError("Discount percentage must be between 1 and 100");
+      return;
+    }
+
+    setSavingCoupon(true);
+    try {
+      const { data: { session: currentSession } } = await supabase.auth.getSession();
+      const token = currentSession?.access_token;
+
+      const res = await fetch("/api/coupons", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "Authorization": `Bearer ${token}`
+        },
+        body: JSON.stringify({
+          code: newCouponCode,
+          discount_percent: disc,
+          usage_limit: newCouponLimit ? parseInt(newCouponLimit) : null,
+          is_first_time_only: newCouponFirstTime,
+          is_active: newCouponActive
+        })
+      });
+
+      const data = await res.json();
+      if (res.ok) {
+        setNewCouponCode("");
+        setNewCouponDiscount("");
+        setNewCouponLimit("");
+        setNewCouponFirstTime(false);
+        setNewCouponActive(true);
+        fetchCoupons();
+      } else {
+        setCouponFormError(data.error || "Failed to create coupon.");
+      }
+    } catch (err) {
+      setCouponFormError(err.message || "Failed to create coupon.");
+    } finally {
+      setSavingCoupon(false);
+    }
+  };
+
+  const handleToggleCouponStatus = async (coupon) => {
+    try {
+      const { data: { session: currentSession } } = await supabase.auth.getSession();
+      const token = currentSession?.access_token;
+
+      const res = await fetch("/api/coupons", {
+        method: "PUT",
+        headers: {
+          "Content-Type": "application/json",
+          "Authorization": `Bearer ${token}`
+        },
+        body: JSON.stringify({
+          id: coupon.id,
+          is_active: !coupon.is_active
+        })
+      });
+
+      if (res.ok) {
+        fetchCoupons();
+      } else {
+        const data = await res.json();
+        alert(data.error || "Failed to update coupon.");
+      }
+    } catch (err) {
+      alert("Error toggling coupon status: " + err.message);
+    }
+  };
+
+  const handleDeleteCoupon = async (couponId) => {
+    if (!confirm("Are you sure you want to delete this coupon code?")) return;
+
+    try {
+      const { data: { session: currentSession } } = await supabase.auth.getSession();
+      const token = currentSession?.access_token;
+
+      const res = await fetch(`/api/coupons?id=${couponId}`, {
+        method: "DELETE",
+        headers: {
+          "Authorization": `Bearer ${token}`
+        }
+      });
+
+      if (res.ok) {
+        fetchCoupons();
+      } else {
+        const data = await res.json();
+        alert(data.error || "Failed to delete coupon.");
+      }
+    } catch (err) {
+      alert("Error deleting coupon: " + err.message);
+    }
+  };
+
+  const fetchPaymentSettings = async () => {
+    setLoadingPaymentSettings(true);
+    try {
+      const { data: { session: currentSession } } = await supabase.auth.getSession();
+      const token = currentSession?.access_token;
+      
+      const res = await fetch("/api/payment/settings", {
+        headers: {
+          "Authorization": `Bearer ${token}`
+        }
+      });
+      const data = await res.json();
+      if (res.ok) {
+        setRazorpayKeyId(data.key_id || "");
+        setRazorpayEnabled(data.enabled || false);
+        setKeySecretConfigured(data.key_secret_configured || false);
+        setWebhookSecretConfigured(data.webhook_secret_configured || false);
+        setRazorpayKeySecret(""); 
+        setRazorpayWebhookSecret(""); 
+      } else {
+        console.error("Failed to load payment settings:", data.error);
+      }
+    } catch (err) {
+      console.error("Error fetching payment settings:", err);
+    } finally {
+      setLoadingPaymentSettings(false);
+    }
+  };
+
+  const handleTestPaymentCredentials = async (e) => {
+    e.preventDefault();
+    if (!razorpayKeyId.trim()) {
+      alert("Key ID is required for testing.");
+      return;
+    }
+    setTestingPaymentCredentials(true);
+    try {
+      const { data: { session: currentSession } } = await supabase.auth.getSession();
+      const token = currentSession?.access_token;
+
+      const res = await fetch("/api/payment/settings", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "Authorization": `Bearer ${token}`
+        },
+        body: JSON.stringify({
+          key_id: razorpayKeyId,
+          key_secret: razorpayKeySecret,
+          test_mode: true
+        })
+      });
+      const data = await res.json();
+      if (res.ok) {
+        alert("✓ Success: Razorpay Key ID and Key Secret credentials are valid!");
+      } else {
+        alert(`❌ Validation Failed: ${data.error || "Incorrect credentials."}`);
+      }
+    } catch (err) {
+      alert(`❌ Error testing credentials: ${err.message}`);
+    } finally {
+      setTestingPaymentCredentials(false);
+    }
+  };
+
+  const handleSavePaymentSettings = async (e) => {
+    e.preventDefault();
+    if (!razorpayKeyId.trim()) {
+      alert("Key ID is required.");
+      return;
+    }
+    setSavingPaymentSettings(true);
+    try {
+      const { data: { session: currentSession } } = await supabase.auth.getSession();
+      const token = currentSession?.access_token;
+
+      const res = await fetch("/api/payment/settings", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "Authorization": `Bearer ${token}`
+        },
+        body: JSON.stringify({
+          enabled: razorpayEnabled,
+          key_id: razorpayKeyId,
+          key_secret: razorpayKeySecret,
+          webhook_secret: razorpayWebhookSecret,
+          test_mode: false
+        })
+      });
+      const data = await res.json();
+      if (res.ok) {
+        alert("✓ Settings saved and validated successfully!");
+        fetchPaymentSettings();
+      } else {
+        alert(`❌ Failed to save settings: ${data.error || "Incorrect credentials."}`);
+      }
+    } catch (err) {
+      alert(`❌ Error saving settings: ${err.message}`);
+    } finally {
+      setSavingPaymentSettings(false);
+    }
+  };
 
   // Verify Supabase Database Table Schemas & Columns on Admin Dashboard Boot
   const checkDatabaseSchema = async () => {
@@ -260,6 +1277,15 @@ export default function AdminPage() {
       }
     } catch (e) {
       mismatches.push("Missing the 'system_logs' table in your Supabase database schema.");
+    }
+
+    try {
+      const { error } = await supabase.from("payment_gateway_settings").select("id").limit(1);
+      if (error && (error.message.includes("does not exist") || error.code === "PGRST205" || error.code === "42P01")) {
+        mismatches.push("Missing the 'payment_gateway_settings' table in your Supabase database schema.");
+      }
+    } catch (e) {
+      mismatches.push("Missing the 'payment_gateway_settings' table in your Supabase database schema.");
     }
 
     setDbMismatches(mismatches);
@@ -547,6 +1573,189 @@ export default function AdminPage() {
     };
   }, [activeAdmin3dModel]);
 
+  // Mount Three.js canvas dynamically to render standard catalog product 3D preview
+  useEffect(() => {
+    if (!previewProduct3D || !adminCatalogPreviewRef.current) return;
+
+    setLoading3DPreview(true);
+    let scene, camera, renderer, controls, frameId, model;
+    const container = adminCatalogPreviewRef.current;
+    const w = container.clientWidth || 600;
+    const h = container.clientHeight || 400;
+
+    scene = new THREE.Scene();
+    scene.background = new THREE.Color("#09090b");
+
+    camera = new THREE.PerspectiveCamera(45, w / h, 0.1, 100);
+    camera.position.set(0, 0.35, 2.3);
+
+    renderer = new THREE.WebGLRenderer({ antialias: true });
+    renderer.setSize(w, h);
+    renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+    renderer.shadowMap.enabled = true;
+    container.innerHTML = "";
+    container.appendChild(renderer.domElement);
+
+    scene.add(new THREE.AmbientLight(0xffffff, 0.8));
+    const d1 = new THREE.DirectionalLight(0xffffff, 0.9);
+    d1.position.set(2, 4, 3);
+    scene.add(d1);
+
+    const d2 = new THREE.DirectionalLight(0xa5b4fc, 0.4);
+    d2.position.set(-2, -2, -3);
+    scene.add(d2);
+
+    controls = new OrbitControls(camera, renderer.domElement);
+    controls.enableDamping = true;
+    controls.dampingFactor = 0.05;
+    controls.target.set(0, 0.35, 0);
+
+    const img = new Image();
+    img.crossOrigin = "anonymous";
+    img.onload = () => {
+      const canvas = document.createElement("canvas");
+      canvas.width = 512;
+      canvas.height = 512;
+      const ctx = canvas.getContext("2d");
+      if (ctx) {
+        ctx.drawImage(img, 0, 0, img.width / 2, img.height, 0, 0, 256, 512);
+        ctx.drawImage(img, img.width / 2, 0, img.width / 2, img.height, 256, 0, 256, 512);
+        try {
+          const imgData = ctx.getImageData(0, 0, 512, 512);
+          const data = imgData.data;
+          for (let i = 0; i < data.length; i += 4) {
+            const r = data[i];
+            const g = data[i+1];
+            const b = data[i+2];
+            const diffRG = Math.abs(r - g);
+            const diffGB = Math.abs(g - b);
+            const diffRB = Math.abs(r - b);
+            if (diffRG < 18 && diffGB < 18 && diffRB < 18 && r >= 85 && r <= 225) {
+              data[i] = 255;
+              data[i+1] = 255;
+              data[i+2] = 255;
+            }
+          }
+          ctx.putImageData(imgData, 0, 0);
+        } catch {}
+      }
+
+      const texture = new THREE.CanvasTexture(canvas);
+      texture.colorSpace = THREE.SRGBColorSpace;
+      texture.flipY = true;
+
+      const loader = new GLTFLoader();
+      loader.load(previewProduct3D.glb_file_url, (gltf) => {
+        model = gltf.scene;
+        model.traverse((node) => {
+          if (node.isMesh) {
+            node.castShadow = true;
+            node.receiveShadow = true;
+            node.material.map = texture;
+            if (node.material.color) node.material.color.set("#ffffff");
+            node.material.roughness = 0.8;
+            node.material.metalness = 0.1;
+            node.material.needsUpdate = true;
+          }
+        });
+
+        const box = new THREE.Box3().setFromObject(model);
+        const center = box.getCenter(new THREE.Vector3());
+        const size = box.getSize(new THREE.Vector3());
+        model.position.x += (model.position.x - center.x);
+        model.position.y += (model.position.y - center.y);
+        model.position.z += (model.position.z - center.z);
+        const maxDim = Math.max(size.x, size.y, size.z);
+        if (maxDim > 0) {
+          const scale = 1.6 / maxDim;
+          model.scale.set(scale, scale, scale);
+        }
+        scene.add(model);
+        setLoading3DPreview(false);
+      }, undefined, () => setLoading3DPreview(false));
+    };
+    img.onerror = () => setLoading3DPreview(false);
+    img.src = previewProduct3D.texture_url;
+
+    const animate = () => {
+      controls.update();
+      renderer.render(scene, camera);
+      frameId = requestAnimationFrame(animate);
+    };
+    animate();
+
+    const handleResize = () => {
+      if (!container || !renderer) return;
+      const width = container.clientWidth;
+      const height = container.clientHeight || 400;
+      camera.aspect = width / height;
+      camera.updateProjectionMatrix();
+      renderer.setSize(width, height);
+    };
+    window.addEventListener("resize", handleResize);
+
+    return () => {
+      window.removeEventListener("resize", handleResize);
+      if (frameId) cancelAnimationFrame(frameId);
+      if (renderer) renderer.dispose();
+      if (scene) scene.clear();
+      container.innerHTML = "";
+    };
+  }, [previewProduct3D]);
+
+  const handleExportOrdersToCSV = () => {
+    try {
+      const csvRows = [];
+      const headers = [
+        "Order ID",
+        "Date",
+        "Customer Name",
+        "Customer Email",
+        "Customer Phone",
+        "Total Amount (INR)",
+        "Status",
+        "Carrier",
+        "Tracking Number",
+        "Payment Gateway",
+        "Items Summary"
+      ];
+      csvRows.push(headers.join(","));
+
+      for (const order of filteredOrders) {
+        const itemsSummary = (order.items || [])
+          .map(item => `${item.name} (${item.size || "M"}) x ${item.quantity || 1}`)
+          .join(" | ");
+
+        const values = [
+          order.id,
+          new Date(order.created_at).toLocaleDateString(),
+          `"${(order.customer_name || "Guest").replace(/"/g, '""')}"`,
+          order.customer_email || "",
+          order.customer_phone || "",
+          order.total_amount || order.total || 0,
+          order.status || "processing",
+          order.carrier || "",
+          order.tracking_number || "",
+          order.payment_gateway || "razorpay",
+          `"${itemsSummary.replace(/"/g, '""')}"`
+        ];
+        csvRows.push(values.join(","));
+      }
+
+      const csvContent = "data:text/csv;charset=utf-8," + csvRows.join("\n");
+      const encodedUri = encodeURI(csvContent);
+      const link = document.createElement("a");
+      link.setAttribute("href", encodedUri);
+      link.setAttribute("download", `Orders_Export_${new Date().toISOString().split('T')[0]}.csv`);
+      document.body.appendChild(link);
+      link.click();
+      document.body.removeChild(link);
+    } catch (err) {
+      console.error("CSV Export Failed:", err);
+      alert("Failed to export orders as CSV.");
+    }
+  };
+
   // Fetch all orders from Supabase & fallback LocalStorage
   const fetchOrders = async () => {
     setLoadingOrders(true);
@@ -753,7 +1962,10 @@ export default function AdminPage() {
           category: editCategory,
           description: finalDescription,
           gallery_urls: finalGalleryUrls,
-          is_template: editIsTemplate
+          is_template: editIsTemplate,
+          allow_name: editAllowNamePersonalization,
+          allow_number: editAllowNumberPersonalization,
+          stock_status: editStockStatus
         })
         .eq("id", productId);
 
@@ -824,7 +2036,10 @@ export default function AdminPage() {
       category: editCategory, 
       description: finalDescription,
       gallery_urls: finalGalleryUrls,
-      is_template: editIsTemplate
+      is_template: editIsTemplate,
+      allow_name: editAllowNamePersonalization,
+      allow_number: editAllowNumberPersonalization,
+      stock_status: editStockStatus
     } : p);
     setProducts(updatedProductsList);
     try {
@@ -860,12 +2075,11 @@ export default function AdminPage() {
         } else {
           setSession(currentSession);
           setCheckingAuth(false);
+          fetchCategories();
           fetchProducts();
           fetchOrders();
           checkDatabaseSchema();
           fetchGlobalFaqs();
-          // Load dynamic categories from localStorage
-          setCatalogCategories(loadStoredCategories());
         }
       }
     };
@@ -893,8 +2107,22 @@ export default function AdminPage() {
     return () => subscription.unsubscribe();
   }, [router]);
 
+  // Fetch dynamic categories from Supabase
+  const fetchCategories = async () => {
+    try {
+      const res = await fetch("/api/categories");
+      const data = await res.json();
+      if (res.ok && data.categories) {
+        setCatalogCategories(data.categories.length > 0 ? data.categories : DEFAULT_CATEGORIES);
+      }
+    } catch (err) {
+      console.error("Error fetching categories:", err);
+    }
+  };
+
   // Fetch all products
   const fetchProducts = async () => {
+
     setLoadingProducts(true);
     try {
       const { data, error } = await supabase
@@ -1219,7 +2447,10 @@ export default function AdminPage() {
         category: category,
         description: finalDescription,
         gallery_urls: galleryUrlsString,
-        is_template: isTemplate
+        is_template: isTemplate,
+        allow_name: allowNamePersonalization,
+        allow_number: allowNumberPersonalization,
+        stock_status: stockStatus
       };
 
       let dbErr = null;
@@ -1357,6 +2588,9 @@ export default function AdminPage() {
           description: finalDescription,
           gallery_urls: localGalleryList.join(","),
           is_template: isTemplate,
+          allow_name: allowNamePersonalization,
+          allow_number: allowNumberPersonalization,
+          stock_status: stockStatus,
           created_at: new Date().toISOString()
         };
 
@@ -1463,6 +2697,68 @@ export default function AdminPage() {
     }
   };
 
+  const handleCreateCategory = async (label) => {
+    const cleanLabel = label.trim();
+    if (!cleanLabel) {
+      setCategoryError("Please enter a category name.");
+      return;
+    }
+    const id = cleanLabel.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/(^-|-$)/g, "");
+    if (catalogCategories.some(c => c.id === id)) {
+      setCategoryError(`"${cleanLabel}" already exists.`);
+      return;
+    }
+
+    try {
+      const { data: { session: currentSession } } = await supabase.auth.getSession();
+      const token = currentSession?.access_token || "";
+      const res = await fetch("/api/categories", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "Authorization": `Bearer ${token}`
+        },
+        body: JSON.stringify({ id, label: cleanLabel })
+      });
+      const data = await res.json();
+      if (res.ok) {
+        fetchCategories();
+        setNewCategoryLabel("");
+        setCategoryError("");
+        addAuditLog(`Added new category "${cleanLabel}" (${id}) to catalog.`);
+      } else {
+        setCategoryError(data.error || "Failed to add category.");
+      }
+    } catch (err) {
+      setCategoryError("Error connecting to server to add category.");
+    }
+  };
+
+  const handleDeleteCategory = async (cat) => {
+    if (!confirm(`Delete the "${cat.label}" category? Products in this category will remain but won't filter here.`)) return;
+
+    try {
+      const { data: { session: currentSession } } = await supabase.auth.getSession();
+      const token = currentSession?.access_token || "";
+      const res = await fetch(`/api/categories?id=${cat.id}`, {
+        method: "DELETE",
+        headers: {
+          "Authorization": `Bearer ${token}`
+        }
+      });
+      const data = await res.json();
+      if (res.ok) {
+        fetchCategories();
+        setCategoryError("");
+        addAuditLog(`Removed category "${cat.label}" (${cat.id}) from catalog.`);
+      } else {
+        setCategoryError(data.error || "Failed to delete category.");
+      }
+    } catch (err) {
+      setCategoryError("Error connecting to server to delete category.");
+    }
+  };
+
   const handleSignOut = async () => {
     await supabase.auth.signOut();
     router.push("/auth");
@@ -1496,10 +2792,39 @@ export default function AdminPage() {
 
   // Filter audit logs
   const filteredLogs = auditLogs.filter(log => {
-    return (
+    // 1. Text keyword search
+    const matchesSearch = 
       (log.operator || "").toLowerCase().includes(logSearchQuery.toLowerCase()) ||
-      (log.action || "").toLowerCase().includes(logSearchQuery.toLowerCase())
-    );
+      (log.action || "").toLowerCase().includes(logSearchQuery.toLowerCase());
+    
+    // 2. Action Category Filter
+    let matchesCategory = true;
+    if (logActionFilter !== "all") {
+      const actionLower = (log.action || "").toLowerCase();
+      if (logActionFilter === "catalog") {
+        matchesCategory = actionLower.includes("catalog") || actionLower.includes("template") || actionLower.includes("product");
+      } else if (logActionFilter === "orders") {
+        matchesCategory = actionLower.includes("order") || actionLower.includes("fulfillment") || actionLower.includes("status");
+      } else if (logActionFilter === "access") {
+        matchesCategory = actionLower.includes("login") || actionLower.includes("session") || actionLower.includes("credential") || actionLower.includes("auth");
+      }
+    }
+
+    // 3. Date filters
+    let matchesDate = true;
+    const logDate = new Date(log.created_at);
+    if (logStartDate) {
+      const start = new Date(logStartDate);
+      start.setHours(0, 0, 0, 0);
+      matchesDate = matchesDate && logDate >= start;
+    }
+    if (logEndDate) {
+      const end = new Date(logEndDate);
+      end.setHours(23, 59, 59, 999);
+      matchesDate = matchesDate && logDate <= end;
+    }
+
+    return matchesSearch && matchesCategory && matchesDate;
   });
 
   return (
@@ -1711,6 +3036,45 @@ export default function AdminPage() {
                 {globalFaqs.filter(faq => !faq.answer || faq.answer.includes("Thank you for asking")).length}
               </span>
             )}
+          </button>
+          <button
+            onClick={() => {
+              setActiveTab("payment-settings");
+              fetchPaymentSettings();
+            }}
+            className={`text-xs font-bold uppercase tracking-wider pb-3 border-b-2 transition-all cursor-pointer flex items-center gap-2 ${
+              activeTab === "payment-settings"
+                ? "border-indigo-500 text-indigo-400 font-extrabold"
+                : "border-transparent text-zinc-500 hover:text-zinc-300"
+            }`}
+          >
+            <span>Payment Settings</span>
+          </button>
+          <button
+            onClick={() => {
+              setActiveTab("sales-stats");
+              fetchOrders();
+            }}
+            className={`text-xs font-bold uppercase tracking-wider pb-3 border-b-2 transition-all cursor-pointer flex items-center gap-2 ${
+              activeTab === "sales-stats"
+                ? "border-indigo-500 text-indigo-400 font-extrabold"
+                : "border-transparent text-zinc-500 hover:text-zinc-300"
+            }`}
+          >
+            <span>Sales & Analytics</span>
+          </button>
+          <button
+            onClick={() => {
+              setActiveTab("coupons");
+              fetchCoupons();
+            }}
+            className={`text-xs font-bold uppercase tracking-wider pb-3 border-b-2 transition-all cursor-pointer flex items-center gap-2 ${
+              activeTab === "coupons"
+                ? "border-indigo-500 text-indigo-400 font-extrabold"
+                : "border-transparent text-zinc-500 hover:text-zinc-300"
+            }`}
+          >
+            <span>Coupons Manager</span>
           </button>
         </section>
 
@@ -2052,14 +3416,7 @@ export default function AdminPage() {
                           <span className="text-sm bg-zinc-900 text-zinc-600 border border-zinc-800 rounded px-1 py-px ml-1 uppercase tracking-wider select-none">default</span>
                         ) : (
                           <button
-                            onClick={() => {
-                              if (!confirm(`Delete the "${cat.label}" category? Products in this category will remain but won\'t filter here.`)) return;
-                              const updated = catalogCategories.filter(c => c.id !== cat.id);
-                              setCatalogCategories(updated);
-                              saveStoredCategories(updated);
-                              setCategoryError("");
-                              addAuditLog(`Removed category "${cat.label}" (${cat.id}) from catalog.`);
-                            }}
+                            onClick={() => handleDeleteCategory(cat)}
                             className="ml-1 p-0.5 rounded text-zinc-600 hover:text-rose-400 hover:bg-rose-500/10 transition-colors cursor-pointer"
                             title={`Delete ${cat.label}`}
                           >
@@ -2081,16 +3438,7 @@ export default function AdminPage() {
                       onKeyDown={(e) => {
                         if (e.key === "Enter") {
                           e.preventDefault();
-                          const label = newCategoryLabel.trim();
-                          if (!label) { setCategoryError("Please enter a category name."); return; }
-                          const id = label.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/(^-|-$)/g, "");
-                          if (catalogCategories.some(c => c.id === id)) { setCategoryError(`"${label}" already exists.`); return; }
-                          const updated = [...catalogCategories, { id, label }];
-                          setCatalogCategories(updated);
-                          saveStoredCategories(updated);
-                          setNewCategoryLabel("");
-                          setCategoryError("");
-                          addAuditLog(`Added new category "${label}" (${id}) to catalog.`);
+                          handleCreateCategory(newCategoryLabel);
                         }
                       }}
                       placeholder="e.g. Cargo Pants, Shorts, Kurtas..."
@@ -2101,18 +3449,7 @@ export default function AdminPage() {
                     )}
                   </div>
                   <button
-                    onClick={() => {
-                      const label = newCategoryLabel.trim();
-                      if (!label) { setCategoryError("Please enter a category name."); return; }
-                      const id = label.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/(^-|-$)/g, "");
-                      if (catalogCategories.some(c => c.id === id)) { setCategoryError(`"${label}" already exists.`); return; }
-                      const updated = [...catalogCategories, { id, label }];
-                      setCatalogCategories(updated);
-                      saveStoredCategories(updated);
-                      setNewCategoryLabel("");
-                      setCategoryError("");
-                      addAuditLog(`Added new category "${label}" (${id}) to catalog.`);
-                    }}
+                    onClick={() => handleCreateCategory(newCategoryLabel)}
                     className="flex items-center gap-1.5 bg-indigo-600 hover:bg-indigo-500 text-white text-xs font-bold px-3 py-2 rounded-lg transition-colors cursor-pointer shrink-0 self-start"
                   >
                     <Plus className="w-3.5 h-3.5" />
@@ -2480,9 +3817,14 @@ export default function AdminPage() {
                                     // Parse description personalization settings
                                     const parsedPers = parseDescriptionPersonalization(product.description || "");
                                     setEditDescription(parsedPers.cleanDescription);
-                                    setEditAllowNamePersonalization(parsedPers.allowName);
-                                    setEditAllowNumberPersonalization(parsedPers.allowNumber);
-                                    setEditStockStatus(parsedPers.stockStatus || "in_stock");
+                                    
+                                    const dbAllowName = product.allow_name !== undefined && product.allow_name !== null ? product.allow_name : null;
+                                    const dbAllowNumber = product.allow_number !== undefined && product.allow_number !== null ? product.allow_number : null;
+                                    const dbStockStatus = product.stock_status || null;
+
+                                    setEditAllowNamePersonalization(dbAllowName !== null ? dbAllowName : parsedPers.allowName);
+                                    setEditAllowNumberPersonalization(dbAllowNumber !== null ? dbAllowNumber : parsedPers.allowNumber);
+                                    setEditStockStatus(dbStockStatus !== null ? dbStockStatus : (parsedPers.stockStatus || "in_stock"));
                                     
                                     setEditGalleryUrls(product.gallery_urls || "");
                                     setEditIsTemplate(isTemplateProduct(product));
@@ -2497,18 +3839,18 @@ export default function AdminPage() {
                                       } else {
                                         setEditSpecs(DEFAULT_PRODUCT_SPECS);
                                       }
-                                      // Load personalization setting from localStorage too as a fallback, but trust parsedPers first
+                                      // Load personalization setting from localStorage too as a fallback, but trust db columns / parsedPers first
                                       const rawPersName = localStorage.getItem(`apparel_pers_name_${product.id}`);
                                       const rawPersNumber = localStorage.getItem(`apparel_pers_number_${product.id}`);
                                       const rawStock = localStorage.getItem(`apparel_stock_${product.id}`) || "in_stock";
-                                      if (product.description && product.description.includes("<!--PERS:")) {
-                                        // already loaded from description
+                                      if ((product.description && product.description.includes("<!--PERS:")) || dbAllowName !== null || dbAllowNumber !== null) {
+                                        // already loaded
                                       } else {
                                         if (rawPersName) setEditAllowNamePersonalization(rawPersName === "true");
                                         if (rawPersNumber) setEditAllowNumberPersonalization(rawPersNumber === "true");
                                       }
-                                      if (product.description && product.description.includes("<!--STOCK:")) {
-                                        // already loaded from description
+                                      if ((product.description && product.description.includes("<!--STOCK:")) || dbStockStatus !== null) {
+                                        // already loaded
                                       } else {
                                         setEditStockStatus(rawStock);
                                       }
@@ -2529,6 +3871,16 @@ export default function AdminPage() {
                                 >
                                   <Trash2 className="w-3.5 h-3.5" />
                                 </button>
+
+                                {product.glb_file_url && (
+                                  <button
+                                    onClick={() => setPreviewProduct3D(product)}
+                                    className="p-1.5 bg-zinc-950 hover:bg-emerald-500/10 border border-zinc-800 hover:border-emerald-500/30 text-zinc-500 hover:text-emerald-400 rounded-md transition-colors cursor-pointer"
+                                    title="Preview in 3D"
+                                  >
+                                    <Box className="w-3.5 h-3.5" />
+                                  </button>
+                                )}
 
                                 <Link
                                   href={`/product/${product.id}`}
@@ -2561,12 +3913,23 @@ export default function AdminPage() {
                   <h3 className="text-base font-semibold">Custom Apparel Orders Ledger</h3>
                 </div>
 
-                <button
-                  onClick={fetchOrders}
-                  className="text-xs font-semibold px-3 py-1.5 bg-zinc-900 border border-zinc-850 hover:border-zinc-800 text-zinc-400 hover:text-white rounded-lg transition-colors cursor-pointer"
-                >
-                  Sync Orders
-                </button>
+                <div className="flex items-center gap-2">
+                  <button
+                    onClick={handleExportOrdersToCSV}
+                    className="text-xs font-semibold px-3 py-1.5 bg-zinc-900 border border-zinc-850 hover:border-zinc-800 text-zinc-400 hover:text-white rounded-lg transition-colors cursor-pointer flex items-center gap-1.5"
+                    title="Export all orders to CSV file"
+                  >
+                    <Download className="w-3.5 h-3.5" />
+                    <span>Export CSV</span>
+                  </button>
+
+                  <button
+                    onClick={fetchOrders}
+                    className="text-xs font-semibold px-3 py-1.5 bg-zinc-900 border border-zinc-850 hover:border-zinc-800 text-zinc-400 hover:text-white rounded-lg transition-colors cursor-pointer"
+                  >
+                    Sync Orders
+                  </button>
+                </div>
               </div>
 
               {/* Search & Filter Controls */}
@@ -2656,6 +4019,14 @@ export default function AdminPage() {
                             className="text-sm font-bold bg-indigo-500/10 hover:bg-indigo-500/20 text-indigo-400 border border-indigo-500/25 px-2.5 py-1 rounded transition-colors cursor-pointer"
                           >
                             Update Fulfillment
+                          </button>
+
+                          <button
+                            onClick={() => setPrintingInvoiceOrder(order)}
+                            className="p-1.5 bg-zinc-950 hover:bg-emerald-500/10 border border-zinc-800 hover:border-emerald-500/20 text-zinc-500 hover:text-emerald-400 rounded-md transition-colors cursor-pointer"
+                            title="Print Invoice"
+                          >
+                            <FileText className="w-3.5 h-3.5" />
                           </button>
 
                           <button
@@ -2894,15 +4265,79 @@ export default function AdminPage() {
                 </button>
               </div>
 
-              {/* Search Log Controls */}
-              <div className="mb-6 bg-zinc-950/60 p-4 border border-zinc-900 rounded-xl select-none">
-                <input
-                  type="text"
-                  value={logSearchQuery}
-                  onChange={(e) => setLogSearchQuery(e.target.value)}
-                  placeholder="Search logs by operator email or action keyword..."
-                  className="w-full bg-zinc-900 border border-zinc-800 rounded-lg px-3 py-2 text-xs text-white placeholder-zinc-500 focus:outline-none focus:border-indigo-500 transition-colors font-sans"
-                />
+              {/* Search & Advanced Log Controls */}
+              <div className="mb-6 bg-zinc-950/60 p-4 border border-zinc-900 rounded-xl space-y-4 select-none">
+                <div className="flex flex-col md:flex-row items-center gap-3">
+                  {/* Search box */}
+                  <div className="relative w-full md:flex-1">
+                    <input
+                      type="text"
+                      value={logSearchQuery}
+                      onChange={(e) => setLogSearchQuery(e.target.value)}
+                      placeholder="Search logs by operator email or action keyword..."
+                      className="w-full bg-zinc-900 border border-zinc-800 rounded-lg px-3 py-2 text-xs text-white placeholder-zinc-500 focus:outline-none focus:border-indigo-500 transition-colors font-sans"
+                    />
+                  </div>
+
+                  {/* Log categories buttons */}
+                  <div className="flex items-center gap-1.5 w-full md:w-auto overflow-x-auto py-1 shrink-0">
+                    {[
+                      { value: "all", label: "All Events" },
+                      { value: "catalog", label: "Catalog" },
+                      { value: "orders", label: "Orders" },
+                      { value: "access", label: "Access Logs" }
+                    ].map((item) => (
+                      <button
+                        key={item.value}
+                        onClick={() => setLogActionFilter(item.value)}
+                        className={`px-3 py-1.5 rounded-lg text-xs font-bold uppercase tracking-wider transition-all cursor-pointer border ${
+                          logActionFilter === item.value
+                            ? "bg-rose-500/10 border-rose-500/20 text-rose-400 font-extrabold"
+                            : "bg-zinc-900 border-zinc-850 text-zinc-400 hover:text-zinc-300 hover:border-zinc-800"
+                        }`}
+                      >
+                        {item.label}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+
+                {/* Date range filters */}
+                <div className="grid grid-cols-2 md:grid-cols-4 gap-4 text-xs pt-2 border-t border-zinc-900">
+                  <div className="space-y-1">
+                    <span className="text-[10px] font-bold text-zinc-500 uppercase tracking-wider block">Start Date Limit</span>
+                    <input
+                      type="date"
+                      value={logStartDate}
+                      onChange={(e) => setLogStartDate(e.target.value)}
+                      className="w-full bg-zinc-900 border border-zinc-800 rounded-lg px-3 py-1.5 text-zinc-300 focus:outline-none focus:border-rose-500 font-mono text-[11px]"
+                    />
+                  </div>
+
+                  <div className="space-y-1">
+                    <span className="text-[10px] font-bold text-zinc-500 uppercase tracking-wider block">End Date Limit</span>
+                    <input
+                      type="date"
+                      value={logEndDate}
+                      onChange={(e) => setLogEndDate(e.target.value)}
+                      className="w-full bg-zinc-900 border border-zinc-800 rounded-lg px-3 py-1.5 text-zinc-300 focus:outline-none focus:border-rose-500 font-mono text-[11px]"
+                    />
+                  </div>
+
+                  <div className="flex items-end">
+                    <button
+                      onClick={() => {
+                        setLogStartDate("");
+                        setLogEndDate("");
+                        setLogSearchQuery("");
+                        setLogActionFilter("all");
+                      }}
+                      className="px-3 py-2 bg-zinc-900 hover:bg-zinc-800 border border-zinc-800 text-zinc-400 hover:text-white rounded-lg text-xs font-bold transition-colors cursor-pointer w-full text-center"
+                    >
+                      Reset Log Filters
+                    </button>
+                  </div>
+                </div>
               </div>
 
               {loadingLogs ? (
@@ -2943,7 +4378,7 @@ export default function AdminPage() {
               )}
             </div>
           </div>
-        ) : (
+        ) : activeTab === "qa" ? (
           /* Customer Q&A Panel Tab */
           <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
             {/* Left section: Create new FAQ */}
@@ -3109,7 +4544,452 @@ export default function AdminPage() {
               </div>
             </div>
           </div>
-        )}
+        ) : activeTab === "payment-settings" ? (
+          /* Payment Settings Tab */
+          <div className="space-y-6">
+            <div className="bg-zinc-900/20 border border-zinc-900 rounded-xl p-6">
+              
+              {/* Header */}
+              <div className="flex items-center justify-between mb-6 border-b border-zinc-900 pb-4">
+                <div className="flex items-center gap-2.5">
+                  <div className="p-1.5 bg-indigo-500/10 rounded-md text-indigo-400">
+                    <Settings className="w-5 h-5" />
+                  </div>
+                  <div>
+                    <h3 className="text-base font-semibold text-white">Razorpay Payment Gateway Integration</h3>
+                    <p className="text-sm text-zinc-500 mt-0.5 select-none">
+                      Configure your Razorpay API keys, webhooks, and toggle checkout status. Settings are saved securely in your Supabase database.
+                    </p>
+                  </div>
+                </div>
+              </div>
+
+              {loadingPaymentSettings ? (
+                <div className="py-20 flex flex-col items-center justify-center text-zinc-500">
+                  <Loader2 className="w-8 h-8 animate-spin text-zinc-400 mb-3" />
+                  <p className="text-xs">Fetching gateway credentials...</p>
+                </div>
+              ) : (
+                <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
+                  
+                  {/* Configuration Form */}
+                  <form onSubmit={handleSavePaymentSettings} className="lg:col-span-2 space-y-6">
+                    
+                    {/* Status switch */}
+                    <div className="bg-zinc-950/40 border border-zinc-900 rounded-xl p-5 flex items-center justify-between">
+                      <div className="space-y-0.5">
+                        <span className="text-sm font-bold text-white block">Gateway Checkout Active</span>
+                        <span className="text-xs text-zinc-500">When enabled, customers can check out using Razorpay on your website.</span>
+                      </div>
+                      <button
+                        type="button"
+                        onClick={() => setRazorpayEnabled(!razorpayEnabled)}
+                        className={`w-12 h-6 flex items-center rounded-full p-1 cursor-pointer transition-colors ${
+                          razorpayEnabled ? "bg-emerald-500 justify-end" : "bg-zinc-800 justify-start"
+                        }`}
+                      >
+                        <span className="w-4 h-4 bg-white rounded-full shadow-md transition-transform" />
+                      </button>
+                    </div>
+
+                    {/* API credentials inputs */}
+                    <div className="bg-zinc-950/20 border border-zinc-900 rounded-xl p-5 space-y-4">
+                      <span className="text-xs font-bold text-indigo-400 uppercase tracking-widest block select-none">API Access Credentials</span>
+                      
+                      {/* Key ID */}
+                      <div>
+                        <label className="block text-[10px] font-bold text-zinc-500 uppercase tracking-widest mb-1.5 select-none">
+                          Razorpay Key ID
+                        </label>
+                        <div className="relative">
+                          <div className="absolute inset-y-0 left-0 pl-3.5 flex items-center pointer-events-none text-zinc-600">
+                            <Key className="w-4 h-4" />
+                          </div>
+                          <input
+                            type="text"
+                            required
+                            value={razorpayKeyId}
+                            onChange={(e) => setRazorpayKeyId(e.target.value)}
+                            placeholder="rzp_test_..."
+                            className="w-full bg-zinc-950 border border-zinc-800 rounded-lg pl-10 pr-3.5 py-2.5 text-xs text-white placeholder-zinc-700 focus:outline-none focus:border-indigo-500 font-mono"
+                          />
+                        </div>
+                        <p className="text-[10px] text-zinc-600 mt-1.5 leading-normal">
+                          Generate API Keys in your Razorpay Dashboard under Settings &gt; API Keys.
+                        </p>
+                      </div>
+
+                      {/* Key Secret */}
+                      <div>
+                        <label className="block text-[10px] font-bold text-zinc-500 uppercase tracking-widest mb-1.5 select-none">
+                          Razorpay Key Secret
+                        </label>
+                        <div className="relative">
+                          <div className="absolute inset-y-0 left-0 pl-3.5 flex items-center pointer-events-none text-zinc-600">
+                            <Lock className="w-4 h-4" />
+                          </div>
+                          <input
+                            type="password"
+                            value={razorpayKeySecret}
+                            onChange={(e) => setRazorpayKeySecret(e.target.value)}
+                            placeholder={keySecretConfigured ? "•••••••••••••••• (Configured)" : "Enter Key Secret"}
+                            className="w-full bg-zinc-950 border border-zinc-800 rounded-lg pl-10 pr-3.5 py-2.5 text-xs text-white placeholder-zinc-600 focus:outline-none focus:border-indigo-500 font-mono"
+                          />
+                        </div>
+                        {keySecretConfigured && (
+                          <div className="mt-1 flex items-center gap-1.5 text-[10px] text-emerald-400/90 font-medium select-none">
+                            <CheckCircle className="w-3.5 h-3.5" />
+                            <span>Secret key has been saved securely. Leave empty to keep it unchanged.</span>
+                          </div>
+                        )}
+                      </div>
+
+                      {/* Webhook Secret */}
+                      <div>
+                        <label className="block text-[10px] font-bold text-zinc-500 uppercase tracking-widest mb-1.5 select-none">
+                          Webhook Secret Key
+                        </label>
+                        <div className="relative">
+                          <div className="absolute inset-y-0 left-0 pl-3.5 flex items-center pointer-events-none text-zinc-600">
+                            <Lock className="w-4 h-4" />
+                          </div>
+                          <input
+                            type="password"
+                            value={razorpayWebhookSecret}
+                            onChange={(e) => setRazorpayWebhookSecret(e.target.value)}
+                            placeholder={webhookSecretConfigured ? "•••••••••••••••• (Configured)" : "Enter Webhook Secret"}
+                            className="w-full bg-zinc-950 border border-zinc-800 rounded-lg pl-10 pr-3.5 py-2.5 text-xs text-white placeholder-zinc-600 focus:outline-none focus:border-indigo-500 font-mono"
+                          />
+                        </div>
+                        {webhookSecretConfigured && (
+                          <div className="mt-1 flex items-center gap-1.5 text-[10px] text-emerald-400/90 font-medium select-none">
+                            <CheckCircle className="w-3.5 h-3.5" />
+                            <span>Webhook Secret has been saved securely. Leave empty to keep it unchanged.</span>
+                          </div>
+                        )}
+                        <p className="text-[10px] text-zinc-600 mt-1.5 leading-normal">
+                          This key is used to cryptographically verify incoming webhook notifications.
+                        </p>
+                      </div>
+                    </div>
+
+                    {/* Actions buttons */}
+                    <div className="flex flex-col sm:flex-row gap-3">
+                      <button
+                        type="button"
+                        disabled={testingPaymentCredentials || savingPaymentSettings}
+                        onClick={handleTestPaymentCredentials}
+                        className="flex-1 bg-zinc-900 hover:bg-zinc-850 border border-zinc-800 text-zinc-300 font-bold text-xs py-3 px-4 rounded-xl transition-colors cursor-pointer flex items-center justify-center gap-2"
+                      >
+                        {testingPaymentCredentials ? (
+                          <Loader2 className="w-4 h-4 animate-spin text-zinc-400" />
+                        ) : (
+                          <span>Test Connection</span>
+                        )}
+                      </button>
+
+                      <button
+                        type="submit"
+                        disabled={testingPaymentCredentials || savingPaymentSettings}
+                        className="flex-1 bg-gradient-to-r from-indigo-500 to-purple-600 hover:from-indigo-600 hover:to-purple-700 text-white font-bold text-xs py-3 px-4 rounded-xl shadow-lg transition-all cursor-pointer flex items-center justify-center gap-2"
+                      >
+                        {savingPaymentSettings ? (
+                          <Loader2 className="w-4 h-4 animate-spin" />
+                        ) : (
+                          <span>Save Settings</span>
+                        )}
+                      </button>
+                    </div>
+
+                  </form>
+
+                  {/* Sidebar Guides */}
+                  <div className="space-y-6">
+                    
+                    {/* Webhook URL card */}
+                    <div className="bg-zinc-950/40 border border-zinc-900 rounded-xl p-5 space-y-3">
+                      <span className="text-xs font-bold text-zinc-400 uppercase tracking-widest block select-none">Webhook Endpoint</span>
+                      <p className="text-xs text-zinc-500 leading-normal">
+                        Configure this URL in your Razorpay Dashboard &gt; Webhooks to handle payments asynchronously (e.g. if the customer closes the tab during checkout).
+                      </p>
+                      <div className="bg-zinc-950 border border-zinc-850 p-2.5 rounded-lg flex items-center justify-between gap-2">
+                        <span className="font-mono text-[10px] text-zinc-300 truncate select-all">
+                          {typeof window !== "undefined" ? window.location.origin + "/api/payment/webhook" : "https://yourdomain.com/api/payment/webhook"}
+                        </span>
+                        <button
+                          type="button"
+                          onClick={() => {
+                            if (typeof window !== "undefined") {
+                              const url = window.location.origin + "/api/payment/webhook";
+                              navigator.clipboard.writeText(url);
+                              alert("Webhook URL copied to clipboard!");
+                            }
+                          }}
+                          className="p-1 hover:bg-zinc-900 text-zinc-500 hover:text-zinc-300 rounded transition-colors cursor-pointer"
+                        >
+                          <Copy className="w-3.5 h-3.5" />
+                        </button>
+                      </div>
+                      <div className="text-[10px] text-zinc-600 space-y-1">
+                        <p className="font-semibold text-zinc-500">Active webhook events to select:</p>
+                        <p>• payment.captured</p>
+                        <p>• order.paid</p>
+                      </div>
+                    </div>
+
+                    {/* Setup Instruction checklist */}
+                    <div className="bg-zinc-950/20 border border-zinc-900 rounded-xl p-5 space-y-3.5 select-none">
+                      <span className="text-xs font-bold text-zinc-400 uppercase tracking-widest block">Razorpay Setup Guide</span>
+                      <div className="space-y-3 text-xs leading-normal">
+                        <div className="flex gap-2.5">
+                          <span className="text-indigo-400 font-extrabold font-mono">1.</span>
+                          <p className="text-zinc-500">Create an account at <a href="https://razorpay.com" target="_blank" rel="noreferrer" className="text-indigo-400 hover:underline">razorpay.com</a>.</p>
+                        </div>
+                        <div className="flex gap-2.5">
+                          <span className="text-indigo-400 font-extrabold font-mono">2.</span>
+                          <p className="text-zinc-500">Switch to <strong>Test Mode</strong> or <strong>Live Mode</strong> in your Razorpay dashboard.</p>
+                        </div>
+                        <div className="flex gap-2.5">
+                          <span className="text-indigo-400 font-extrabold font-mono">3.</span>
+                          <p className="text-zinc-500">Generate API Keys, paste Key ID & Key Secret here, and click <strong>Test Connection</strong>.</p>
+                        </div>
+                        <div className="flex gap-2.5">
+                          <span className="text-indigo-400 font-extrabold font-mono">4.</span>
+                          <p className="text-zinc-500">Add a new Webhook with events `payment.captured` & `order.paid` using the webhook endpoint URL shown above. Save the secret key in both places.</p>
+                        </div>
+                      </div>
+                    </div>
+
+                  </div>
+
+                </div>
+              )}
+
+            </div>
+          </div>
+        ) : activeTab === "sales-stats" ? (
+          /* Sales Stats Tab */
+          <SalesStatsView orders={orders} />
+        ) : activeTab === "coupons" ? (
+          /* Coupons & Discounts Manager Tab */
+          <div className="grid grid-cols-1 md:grid-cols-3 gap-8 animate-in fade-in duration-200">
+            
+            {/* Left section: Create/Add Coupon Form */}
+            <div className="md:col-span-1">
+              <div className="bg-zinc-900/40 border border-zinc-800 rounded-xl p-6 backdrop-blur-xl sticky top-24">
+                <div className="flex items-center gap-2.5 mb-1">
+                  <div className="p-1.5 bg-indigo-500/10 rounded-md text-indigo-400">
+                    <Percent className="w-5 h-5" />
+                  </div>
+                  <div>
+                    <h3 className="font-extrabold text-sm text-white">Create Promo Code</h3>
+                    <p className="text-xs text-zinc-500">Configure new customer discounts</p>
+                  </div>
+                </div>
+
+                <form onSubmit={handleCreateCoupon} className="space-y-4 mt-6">
+                  {couponFormError && (
+                    <div className="bg-rose-500/10 border border-rose-500/20 text-rose-400 text-xs font-bold p-3 rounded-lg flex items-center gap-2">
+                      <span>⚠️</span> {couponFormError}
+                    </div>
+                  )}
+
+                  <div className="space-y-1">
+                    <label className="text-[10px] font-bold text-zinc-500 uppercase tracking-widest block">Coupon Code</label>
+                    <input
+                      type="text"
+                      placeholder="e.g. WELCOME30"
+                      value={newCouponCode}
+                      onChange={(e) => setNewCouponCode(e.target.value.toUpperCase())}
+                      className="w-full bg-zinc-950 border border-zinc-850 px-3.5 py-2 rounded-lg text-xs font-mono font-bold text-zinc-200 focus:outline-none focus:border-indigo-500 uppercase placeholder:text-zinc-700"
+                    />
+                  </div>
+
+                  <div className="space-y-1">
+                    <label className="text-[10px] font-bold text-zinc-500 uppercase tracking-widest block">Discount Percentage (%)</label>
+                    <input
+                      type="number"
+                      placeholder="e.g. 30"
+                      min="1"
+                      max="100"
+                      value={newCouponDiscount}
+                      onChange={(e) => setNewCouponDiscount(e.target.value)}
+                      className="w-full bg-zinc-950 border border-zinc-850 px-3.5 py-2 rounded-lg text-xs font-bold text-zinc-200 focus:outline-none focus:border-indigo-500 placeholder:text-zinc-700"
+                    />
+                  </div>
+
+                  <div className="space-y-1">
+                    <label className="text-[10px] font-bold text-zinc-500 uppercase tracking-widest block">Total Usage Limit (Optional)</label>
+                    <input
+                      type="number"
+                      placeholder="Unlimited if empty"
+                      min="1"
+                      value={newCouponLimit}
+                      onChange={(e) => setNewCouponLimit(e.target.value)}
+                      className="w-full bg-zinc-950 border border-zinc-850 px-3.5 py-2 rounded-lg text-xs font-bold text-zinc-200 focus:outline-none focus:border-indigo-500 placeholder:text-zinc-700"
+                    />
+                  </div>
+
+                  {/* Settings Toggles */}
+                  <div className="space-y-3 pt-2">
+                    <label className="flex items-center gap-2.5 cursor-pointer select-none">
+                      <input
+                        type="checkbox"
+                        checked={newCouponFirstTime}
+                        onChange={(e) => setNewCouponFirstTime(e.target.checked)}
+                        className="rounded border-zinc-800 bg-zinc-950 text-indigo-600 focus:ring-0 focus:ring-offset-0 cursor-pointer"
+                      />
+                      <div>
+                        <span className="text-xs font-bold text-zinc-300 block">First-Time Users Only</span>
+                        <span className="text-[10px] text-zinc-500 block">Restrict code to users with 0 completed orders</span>
+                      </div>
+                    </label>
+
+                    <label className="flex items-center gap-2.5 cursor-pointer select-none">
+                      <input
+                        type="checkbox"
+                        checked={newCouponActive}
+                        onChange={(e) => setNewCouponActive(e.target.checked)}
+                        className="rounded border-zinc-800 bg-zinc-950 text-indigo-600 focus:ring-0 focus:ring-offset-0 cursor-pointer"
+                      />
+                      <div>
+                        <span className="text-xs font-bold text-zinc-300 block">Active Status</span>
+                        <span className="text-[10px] text-zinc-500 block">Enable coupon code immediately</span>
+                      </div>
+                    </label>
+                  </div>
+
+                  <button
+                    type="submit"
+                    disabled={savingCoupon}
+                    className="w-full bg-indigo-600 hover:bg-indigo-500 disabled:bg-zinc-800 disabled:text-zinc-500 text-white font-extrabold text-xs py-2.5 rounded-lg transition-all cursor-pointer shadow-lg shadow-indigo-600/10 hover:shadow-indigo-600/20 active:scale-95 flex items-center justify-center gap-2 mt-4"
+                  >
+                    {savingCoupon ? "Creating..." : "Generate Promo Code"}
+                  </button>
+                </form>
+              </div>
+            </div>
+
+            {/* Right section: Coupons Table */}
+            <div className="md:col-span-2">
+              <div className="bg-zinc-900/20 border border-zinc-900 rounded-xl p-6 backdrop-blur-xl">
+                
+                {/* Fallback alert banner if schema is not run yet */}
+                {couponsFallbackMode && (
+                  <div className="mb-6 bg-amber-500/10 border border-amber-500/20 rounded-xl p-4 flex gap-3.5 items-start">
+                    <span className="text-lg">📢</span>
+                    <div className="flex-1">
+                      <h4 className="text-xs font-bold text-amber-400 uppercase tracking-wider">Database Schema Setup Required</h4>
+                      <p className="text-xs text-zinc-400 mt-1 leading-relaxed">
+                        {couponsFallbackMessage}
+                      </p>
+                      <pre className="bg-zinc-950 border border-zinc-900 rounded p-2 text-[10px] font-mono text-zinc-500 mt-2.5 overflow-x-auto whitespace-pre-wrap select-all">
+                        {`CREATE TABLE coupons (
+  id BIGSERIAL PRIMARY KEY,
+  code TEXT UNIQUE NOT NULL,
+  discount_percent INT NOT NULL CHECK (discount_percent > 0 AND discount_percent <= 100),
+  usage_limit INT DEFAULT NULL,
+  used_count INT DEFAULT 0,
+  is_first_time_only BOOLEAN DEFAULT FALSE,
+  is_active BOOLEAN DEFAULT TRUE,
+  created_at TIMESTAMPTZ DEFAULT NOW()
+);`}
+                      </pre>
+                    </div>
+                  </div>
+                )}
+
+                <div className="flex justify-between items-center mb-6">
+                  <h3 className="font-extrabold text-sm text-white">Active Promo Codes List</h3>
+                  <button
+                    onClick={fetchCoupons}
+                    className="text-xs font-bold text-indigo-400 hover:text-indigo-300 transition-colors cursor-pointer"
+                  >
+                    Reload list
+                  </button>
+                </div>
+
+                {loadingCoupons ? (
+                  <div className="py-20 flex flex-col items-center justify-center text-zinc-500 gap-2.5">
+                    <Loader2 className="w-6 h-6 animate-spin text-indigo-500" />
+                    <span className="text-xs font-bold uppercase tracking-wider">Loading coupons...</span>
+                  </div>
+                ) : coupons.length === 0 ? (
+                  <div className="py-20 text-center text-zinc-600 border border-dashed border-zinc-850 rounded-xl">
+                    <Percent className="w-8 h-8 mx-auto text-zinc-700 mb-3" />
+                    <p className="text-xs font-bold uppercase tracking-wider">No Coupon Codes Found</p>
+                    <p className="text-xs text-zinc-500 mt-1">Generate your first promo code using the panel on the left.</p>
+                  </div>
+                ) : (
+                  <div className="overflow-x-auto">
+                    <table className="w-full text-left text-xs">
+                      <thead>
+                        <tr className="border-b border-zinc-900 text-zinc-500 uppercase tracking-widest text-[9px] font-bold">
+                          <th className="py-3 px-4">Code</th>
+                          <th className="py-3 px-4">Discount</th>
+                          <th className="py-3 px-4">Usage Count</th>
+                          <th className="py-3 px-4">Audience</th>
+                          <th className="py-3 px-4">Status</th>
+                          <th className="py-3 px-4 text-right">Actions</th>
+                        </tr>
+                      </thead>
+                      <tbody className="divide-y divide-zinc-900/40">
+                        {coupons.map((coupon) => (
+                          <tr key={coupon.id} className="hover:bg-zinc-900/20 transition-colors">
+                            <td className="py-4 px-4 font-mono font-bold text-white tracking-wider text-xs">
+                              {coupon.code}
+                            </td>
+                            <td className="py-4 px-4 font-extrabold text-emerald-400">
+                              {coupon.discount_percent}% OFF
+                            </td>
+                            <td className="py-4 px-4 text-zinc-400">
+                              <span className="font-extrabold text-zinc-300">{coupon.used_count || 0}</span> 
+                              <span className="text-zinc-600 font-mono"> / {coupon.usage_limit !== null ? coupon.usage_limit : "∞"}</span>
+                            </td>
+                            <td className="py-4 px-4">
+                              {coupon.is_first_time_only ? (
+                                <span className="bg-purple-950/40 border border-purple-900/60 text-purple-400 text-[10px] font-bold px-2 py-0.5 rounded-full select-none">
+                                  First Time Users
+                                </span>
+                              ) : (
+                                <span className="bg-zinc-900 border border-zinc-800 text-zinc-500 text-[10px] font-bold px-2 py-0.5 rounded-full select-none">
+                                  All Users
+                                </span>
+                              )}
+                            </td>
+                            <td className="py-4 px-4">
+                              <span className={`inline-flex items-center gap-1.5 text-[10px] font-bold ${coupon.is_active ? "text-emerald-400" : "text-rose-400"}`}>
+                                <span className={`w-1.5 h-1.5 rounded-full ${coupon.is_active ? "bg-emerald-500 animate-pulse" : "bg-rose-500"}`} />
+                                {coupon.is_active ? "Active" : "Inactive"}
+                              </span>
+                            </td>
+                            <td className="py-4 px-4 text-right space-x-3">
+                              <button
+                                onClick={() => handleToggleCouponStatus(coupon)}
+                                className={`text-[10px] font-bold uppercase tracking-wider cursor-pointer hover:underline ${
+                                  coupon.is_active ? "text-rose-400" : "text-emerald-400"
+                                }`}
+                              >
+                                {coupon.is_active ? "Disable" : "Enable"}
+                              </button>
+                              <button
+                                onClick={() => handleDeleteCoupon(coupon.id)}
+                                className="text-zinc-500 hover:text-rose-400 text-[10px] font-bold uppercase tracking-wider cursor-pointer hover:underline"
+                              >
+                                Delete
+                              </button>
+                            </td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                )}
+              </div>
+            </div>
+
+          </div>
+        ) : null}
 
       </main>
 
@@ -3165,6 +5045,222 @@ export default function AdminPage() {
               </button>
             </div>
 
+          </div>
+        </div>
+      )}
+
+      {/* Catalog Product 3D Preview Modal */}
+      {previewProduct3D && (
+        <div className="fixed inset-0 z-50 bg-zinc-950/95 backdrop-blur-md flex items-center justify-center p-4">
+          <div className="bg-zinc-900 border border-zinc-800 rounded-2xl w-full max-w-4xl h-[80vh] flex flex-col shadow-2xl relative overflow-hidden">
+            
+            {/* Modal Header */}
+            <div className="p-4 border-b border-zinc-850 flex items-center justify-between bg-zinc-900/50">
+              <div className="flex items-center gap-2">
+                <Box className="w-5 h-5 text-indigo-400 animate-pulse" />
+                <div>
+                  <h3 className="font-extrabold text-sm text-white">Catalog Product 3D Preview</h3>
+                  <p className="text-xs text-zinc-500 mt-0.5">Product: <span className="font-bold text-zinc-300">{previewProduct3D.name}</span></p>
+                </div>
+              </div>
+              
+              <button 
+                onClick={() => setPreviewProduct3D(null)}
+                className="p-1.5 hover:bg-zinc-800 rounded-lg text-zinc-400 hover:text-white cursor-pointer transition-colors"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+
+            {/* Canvas Area */}
+            <div className="flex-1 w-full bg-zinc-950 relative flex items-center justify-center">
+              <div ref={adminCatalogPreviewRef} className="w-full h-full" />
+              {loading3DPreview && (
+                <div className="absolute inset-0 flex flex-col items-center justify-center bg-zinc-950/70 text-white gap-2">
+                  <Loader2 className="w-8 h-8 animate-spin text-indigo-500" />
+                  <p className="text-xs text-zinc-400">Loading 3D asset pipeline...</p>
+                </div>
+              )}
+            </div>
+
+            {/* Instruction Footer */}
+            <div className="p-3 bg-zinc-950 border-t border-zinc-850 text-center text-xs text-zinc-500">
+              Drag to rotate. Scroll to zoom. Hold shift to pan.
+            </div>
+
+          </div>
+        </div>
+      )}
+
+      {/* Printable Invoice Modal Overlay */}
+      {printingInvoiceOrder && (
+        <div className="fixed inset-0 z-50 bg-zinc-950/80 backdrop-blur-sm flex items-center justify-center p-4">
+          <style>{`
+            @media print {
+              body * {
+                visibility: hidden;
+              }
+              #printable-invoice-body, #printable-invoice-body * {
+                visibility: visible;
+              }
+              #printable-invoice-body {
+                position: absolute;
+                left: 0;
+                top: 0;
+                width: 100%;
+                height: auto;
+                margin: 0;
+                padding: 20px;
+                box-shadow: none;
+                background: white !important;
+                color: black !important;
+              }
+              .no-print {
+                display: none !important;
+              }
+            }
+          `}</style>
+          <div className="bg-zinc-900 border border-zinc-800 rounded-2xl w-full max-w-2xl shadow-2xl overflow-hidden flex flex-col">
+            
+            {/* Header bar */}
+            <div className="p-4 border-b border-zinc-850 bg-zinc-950 flex items-center justify-between no-print">
+              <div className="flex items-center gap-2">
+                <FileText className="w-5 h-5 text-indigo-400" />
+                <span className="text-xs font-bold text-zinc-300 uppercase tracking-widest font-sans">Order Invoice Inspector</span>
+              </div>
+              <div className="flex items-center gap-2">
+                <button
+                  onClick={() => window.print()}
+                  className="px-3 py-1 bg-indigo-600 hover:bg-indigo-500 text-white rounded text-xs font-semibold cursor-pointer flex items-center gap-1 transition-colors"
+                >
+                  <Printer className="w-3.5 h-3.5" />
+                  Print Invoice
+                </button>
+                <button 
+                  onClick={() => setPrintingInvoiceOrder(null)}
+                  className="p-1 hover:bg-zinc-900 rounded-lg text-zinc-500 hover:text-white transition-colors cursor-pointer"
+                >
+                  <X className="w-4 h-4" />
+                </button>
+              </div>
+            </div>
+
+            {/* Invoice Printable Body */}
+            <div id="printable-invoice-body" className="p-8 overflow-y-auto max-h-[75vh] bg-white text-zinc-900 font-sans text-left space-y-6">
+              
+              {/* Header */}
+              <div className="flex justify-between items-start border-b border-zinc-200 pb-6">
+                <div>
+                  <div className="flex items-center gap-2.5 mb-2">
+                    <div className="w-8 h-8 bg-indigo-600 rounded flex items-center justify-center text-white font-extrabold text-sm">
+                      T3D
+                    </div>
+                    <span className="font-extrabold text-sm tracking-tight text-zinc-950">THREAD 3D APPAREL STUDIO</span>
+                  </div>
+                  <p className="text-xs text-zinc-500 leading-relaxed">
+                    102, Innovation & Sublimation Hub<br />
+                    Industrial Sector Phase II, Chennai, TN, India<br />
+                    help@thread3d.com | +91 44 2390 1234
+                  </p>
+                </div>
+                <div className="text-right">
+                  <h2 className="text-2xl font-black text-zinc-900 tracking-tight">INVOICE</h2>
+                  <p className="text-xs text-zinc-500 mt-1">Invoice ID: <span className="font-mono font-bold text-zinc-800">#{printingInvoiceOrder.id.substring(0, 8).toUpperCase()}</span></p>
+                  <p className="text-xs text-zinc-500">Date: <span className="font-bold text-zinc-800">{new Date(printingInvoiceOrder.created_at).toLocaleDateString()}</span></p>
+                  <p className="text-xs text-zinc-500">Payment: <span className="font-bold text-zinc-800 uppercase">{printingInvoiceOrder.payment_gateway || "Razorpay"}</span></p>
+                </div>
+              </div>
+
+              {/* Billing Info */}
+              <div className="grid grid-cols-2 gap-8 text-xs">
+                <div>
+                  <h3 className="font-bold text-zinc-400 uppercase tracking-wider mb-2">Bill To</h3>
+                  <p className="font-bold text-sm text-zinc-800">{printingInvoiceOrder.customer_name || "Guest Customer"}</p>
+                  <p className="text-zinc-600 mt-1">{printingInvoiceOrder.customer_email || "no-email@thread3d.com"}</p>
+                  {printingInvoiceOrder.customer_phone && (
+                    <p className="text-zinc-600 mt-0.5">Phone: {printingInvoiceOrder.customer_phone}</p>
+                  )}
+                </div>
+                <div>
+                  <h3 className="font-bold text-zinc-400 uppercase tracking-wider mb-2">Shipping Destination</h3>
+                  <p className="text-zinc-700 leading-relaxed">{printingInvoiceOrder.shipping_address || "Standard Customization Depot"}</p>
+                  {printingInvoiceOrder.carrier && (
+                    <p className="text-zinc-600 mt-2">Carrier: <span className="font-bold text-zinc-800">{printingInvoiceOrder.carrier}</span></p>
+                  )}
+                  {printingInvoiceOrder.tracking_number && (
+                    <p className="text-zinc-600 mt-0.5">Tracking ID: <span className="font-mono font-bold text-zinc-800">{printingInvoiceOrder.tracking_number}</span></p>
+                  )}
+                </div>
+              </div>
+
+              {/* Items Table */}
+              <div className="border border-zinc-200 rounded-lg overflow-hidden mt-4">
+                <table className="w-full text-xs text-left">
+                  <thead className="bg-zinc-50 border-b border-zinc-200 text-zinc-700 font-bold uppercase tracking-wider">
+                    <tr>
+                      <th className="p-3">Item Details</th>
+                      <th className="p-3 text-center">Size</th>
+                      <th className="p-3 text-center">Qty</th>
+                      <th className="p-3 text-right">Unit Price</th>
+                      <th className="p-3 text-right">Amount</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-zinc-200 text-zinc-800">
+                    {(printingInvoiceOrder.items || []).map((item, idx) => (
+                      <tr key={idx}>
+                        <td className="p-3 font-medium">
+                          <div>{item.name || "Custom Apparel"}</div>
+                          {(item.customName || item.customNumber) && (
+                            <div className="text-[10px] text-indigo-600 mt-0.5 font-bold uppercase">
+                              Specs: {item.customName ? `NAME: ${item.customName}` : ""} {item.customNumber ? `NUMBER: ${item.customNumber}` : ""}
+                            </div>
+                          )}
+                        </td>
+                        <td className="p-3 text-center font-mono">{item.size || "M"}</td>
+                        <td className="p-3 text-center">{item.quantity || 1}</td>
+                        <td className="p-3 text-right font-mono">₹{(item.price || 3999).toLocaleString('en-IN')}</td>
+                        <td className="p-3 text-right font-mono font-semibold">₹{((item.price || 3999) * (item.quantity || 1)).toLocaleString('en-IN')}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+
+              {/* Financial calculations */}
+              <div className="flex justify-end text-xs pt-4">
+                <div className="w-64 space-y-2">
+                  <div className="flex justify-between text-zinc-600">
+                    <span>Subtotal:</span>
+                    <span className="font-mono">₹{((printingInvoiceOrder.total_amount || printingInvoiceOrder.total) || 0).toLocaleString('en-IN')}</span>
+                  </div>
+                  <div className="flex justify-between text-zinc-600">
+                    <span>Shipping fee:</span>
+                    <span className="font-mono text-emerald-600">FREE</span>
+                  </div>
+                  <div className="flex justify-between text-zinc-600 border-t border-zinc-150 pt-2 font-bold text-sm text-zinc-950">
+                    <span>Grand Total:</span>
+                    <span className="font-mono text-indigo-600">₹{((printingInvoiceOrder.total_amount || printingInvoiceOrder.total) || 0).toLocaleString('en-IN')}</span>
+                  </div>
+                </div>
+              </div>
+
+              {/* Thank you note */}
+              <div className="text-center pt-8 border-t border-zinc-200 text-zinc-400 text-[10px]">
+                <p>This is a computer-generated invoice. No physical signature is required.</p>
+                <p className="mt-1 font-bold">Thank you for supporting 3D Apparel Studio innovation!</p>
+              </div>
+
+            </div>
+
+            {/* Modal actions */}
+            <div className="p-3 border-t border-zinc-850 bg-zinc-900 flex justify-end gap-2 no-print">
+              <button 
+                onClick={() => setPrintingInvoiceOrder(null)}
+                className="px-4 py-1.5 bg-zinc-800 hover:bg-zinc-700 text-white rounded-xl text-xs font-semibold cursor-pointer transition-colors"
+              >
+                Close Invoice
+              </button>
+            </div>
           </div>
         </div>
       )}

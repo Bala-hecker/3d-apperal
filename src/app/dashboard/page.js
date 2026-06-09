@@ -58,7 +58,20 @@ export default function DashboardPage() {
     { id: "activewear", label: "Activewears" },
   ]);
 
-  // Load dynamic categories from localStorage on mount
+  const fetchCategories = async () => {
+    try {
+      const res = await fetch("/api/categories");
+      const data = await res.json();
+      if (res.ok && data.categories && data.categories.length > 0) {
+        setCatalogCategories(data.categories);
+        localStorage.setItem("apparel_categories", JSON.stringify(data.categories));
+      }
+    } catch (err) {
+      console.error("Error fetching categories:", err);
+    }
+  };
+
+  // Load dynamic categories from localStorage & API on mount
   useEffect(() => {
     try {
       const raw = localStorage.getItem("apparel_categories");
@@ -67,6 +80,7 @@ export default function DashboardPage() {
         if (Array.isArray(parsed) && parsed.length > 0) setCatalogCategories(parsed);
       }
     } catch (e) { /* use defaults */ }
+    fetchCategories();
   }, []);
 
   // Dashboard view tab selector
@@ -87,6 +101,8 @@ export default function DashboardPage() {
     { sender: "bot", text: "Welcome to Thread 3D Shop Help Desk! 🧵 How can we assist you today?", time: new Date().toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'}) }
   ]);
   const [chatInput, setChatInput] = useState("");
+  const [isBotTyping, setIsBotTyping] = useState(false);
+  const chatEndRef = React.useRef(null);
   
   // Customer Notification Center & Slide-in Toasts (Loaded persistently from LocalStorage!)
   const [notifications, setNotifications] = useState([]);
@@ -491,6 +507,12 @@ export default function DashboardPage() {
       return () => clearTimeout(timer);
     }
   }, [activeToast]);
+  // Auto scroll chat to bottom when messages or typing status updates
+  useEffect(() => {
+    if (chatEndRef.current) {
+      chatEndRef.current.scrollIntoView({ behavior: "smooth" });
+    }
+  }, [chatMessages, isBotTyping, showHelpChat]);
 
   // 1. Auth check and initial fetch
   useEffect(() => {
@@ -571,6 +593,53 @@ export default function DashboardPage() {
     }
   };
 
+  // Trigger chatbot response based on user input
+  const triggerBotResponse = (userQueryText) => {
+    setIsBotTyping(true);
+    
+    setTimeout(() => {
+      const query = userQueryText.toLowerCase();
+      let replyText = "Our design operators are reviewing your query. Custom apparel production and tailoring takes 5-7 business days.";
+      
+      if (query.includes("ship") || query.includes("track") || query.includes("order")) {
+        if (pastOrders && pastOrders.length > 0) {
+          const latest = pastOrders[0];
+          const ordId = latest.id.substring(0, 8).toUpperCase();
+          const status = latest.status || "processing";
+          const total = latest.total_amount || 3999;
+          const tracking = latest.tracking_number ? ` (Tracking: ${latest.tracking_number} via ${latest.carrier || "Delivery"})` : "";
+          replyText = `I found your latest order #${ordId}! Total: ₹${total.toLocaleString('en-IN')}. Current status: **${status.toUpperCase()}**.${tracking}. You can view detailed transit steps under the "Track Orders" tab in your dashboard!`;
+        } else {
+          replyText = "I checked our databases but couldn't find any orders placed under your account. Once you complete your checkout via Razorpay, they will be listed here.";
+        }
+      } else if (query.includes("price") || query.includes("discount") || query.includes("promo") || query.includes("coupon")) {
+        replyText = "Get 20% off custom streetwear! Apply the promo coupon code **THREAD3D** in the cart drawer. Note: It applies to all customized items!";
+      } else if (query.includes("size") || query.includes("fit") || query.includes("sizing")) {
+        replyText = "Our 3D tailored street garments fit true to size. Typical specifications:\n• **S:** Chest 38\", Sleeve 8\"\n• **M:** Chest 40\", Sleeve 8.5\"\n• **L:** Chest 42\", Sleeve 9\"\n• **XL:** Chest 44\", Sleeve 9.5\"\n\nClick the Size Guide inside any garment page for a detailed scale diagram!";
+      } else if (query.includes("3d") || query.includes("decal") || query.includes("custom") || query.includes("how to")) {
+        replyText = "To design, select any blank item from our catalog, and customize it in real-time 3D by picking base colors, decals, and custom player squad name/number details before clicking checkout!";
+      } else if (query.includes("hi") || query.includes("hello") || query.includes("hey")) {
+        replyText = "Hello! I am your Thread 3D shopping assistant. Ask me about your orders, size specifications, custom templates, or active discounts!";
+      } else if (query.includes("product") || query.includes("stock") || query.includes("buy")) {
+        const inStock = products.filter(p => !isTemplateProduct(p)).slice(0, 2);
+        if (inStock.length > 0) {
+          replyText = `We currently have premium products in stock, including:\n${inStock.map(p => `• **${p.name}** for ₹${(p.price || 3999).toLocaleString('en-IN')}`).join("\n")}\n\nSelect a garment to launch the custom 3D editor!`;
+        } else {
+          replyText = "All custom model designs are available to order! Browse our categories above to get started.";
+        }
+      }
+      
+      const botMsg = {
+        sender: "bot",
+        text: replyText,
+        time: new Date().toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'})
+      };
+      
+      setChatMessages(prev => [...prev, botMsg]);
+      setIsBotTyping(false);
+    }, 1000);
+  };
+
   // Help Desk Interactive Live Chat Submission
   const handleSendChatMessage = (e) => {
     e.preventDefault();
@@ -583,29 +652,20 @@ export default function DashboardPage() {
     };
     
     setChatMessages(prev => [...prev, userMsg]);
+    const textToSend = chatInput;
     setChatInput("");
     
-    // Auto-respond simulating active support desk operators
-    setTimeout(() => {
-      let replyText = "Our design operators are reviewing your design. Custom apparel production and tailoring takes 5-7 business days.";
-      const query = chatInput.toLowerCase();
-      if (query.includes("ship") || query.includes("track") || query.includes("order")) {
-        replyText = "You can track physical shipments live using the 'Track Orders' tab in your dashboard! Once shipped, you can launch our real-time GPS packaging journey simulation maps!";
-      } else if (query.includes("price") || query.includes("discount") || query.includes("promo")) {
-        replyText = "Try using the discount coupon code 'THREAD3D' in your shopping cart to get an instant 20% discount on your order!";
-      } else if (query.includes("size") || query.includes("fit")) {
-        replyText = "Our garments fit true to size! You can click 'Open Size Guide chart' inside the apparel configurator to see detailed chest and sleeve length measurements in inches.";
-      } else if (query.includes("3d") || query.includes("decal") || query.includes("custom")) {
-        replyText = "Yes! You can upload custom decals, paint brush strokes, and overlay text using our Three.js customizer. Admins get high-resolution transparent print vectors!";
-      }
-      
-      const botMsg = {
-        sender: "bot",
-        text: replyText,
-        time: new Date().toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'})
-      };
-      setChatMessages(prev => [...prev, botMsg]);
-    }, 1200);
+    triggerBotResponse(textToSend);
+  };
+
+  const handleQuickActionClick = (promptText) => {
+    const userMsg = {
+      sender: "user",
+      text: promptText,
+      time: new Date().toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'})
+    };
+    setChatMessages(prev => [...prev, userMsg]);
+    triggerBotResponse(promptText);
   };
 
 
@@ -1772,7 +1832,7 @@ export default function DashboardPage() {
             <span className="text-lg">💬</span>
           </button>
         ) : (
-          <div className="w-80 h-96 bg-zinc-950 border border-zinc-900 rounded-2xl shadow-2xl flex flex-col justify-between overflow-hidden relative border-indigo-500/10 shadow-indigo-500/5 animate-in slide-in-from-bottom duration-200">
+          <div className="w-80 h-[440px] bg-zinc-950 border border-zinc-900 rounded-2xl shadow-2xl flex flex-col justify-between overflow-hidden relative border-indigo-500/10 shadow-indigo-500/5 animate-in slide-in-from-bottom duration-200">
             {/* Header */}
             <div className="bg-zinc-900/60 border-b border-zinc-850 p-3 flex items-center justify-between">
               <div className="flex items-center gap-2">
@@ -1788,7 +1848,7 @@ export default function DashboardPage() {
             </div>
 
             {/* Chat message stream */}
-            <div className="flex-1 overflow-y-auto p-4 space-y-3 font-medium text-sm">
+            <div className="flex-1 overflow-y-auto p-4 space-y-3 font-medium text-sm scrollbar-thin">
               {chatMessages.map((m, idx) => (
                 <div key={idx} className={`flex flex-col ${m.sender === "user" ? "items-end" : "items-start"}`}>
                   <div className={`p-2 rounded-xl max-w-[85%] leading-relaxed ${
@@ -1801,6 +1861,48 @@ export default function DashboardPage() {
                   <span className="text-[7px] text-zinc-500 mt-1 select-none font-mono">{m.time}</span>
                 </div>
               ))}
+              {isBotTyping && (
+                <div className="flex flex-col items-start animate-in fade-in duration-200">
+                  <div className="bg-zinc-900 text-zinc-400 border border-zinc-850 px-3 py-2 rounded-xl rounded-tl-none flex items-center gap-1 select-none">
+                    <span className="w-1.5 h-1.5 bg-zinc-400 rounded-full animate-bounce" style={{ animationDelay: '0ms' }} />
+                    <span className="w-1.5 h-1.5 bg-zinc-400 rounded-full animate-bounce" style={{ animationDelay: '150ms' }} />
+                    <span className="w-1.5 h-1.5 bg-zinc-400 rounded-full animate-bounce" style={{ animationDelay: '300ms' }} />
+                  </div>
+                </div>
+              )}
+              <div ref={chatEndRef} />
+            </div>
+
+            {/* Quick suggestion pills */}
+            <div className="flex gap-1.5 overflow-x-auto px-3 py-2 bg-zinc-950 border-t border-zinc-900/60 scrollbar-none select-none">
+              <button
+                type="button"
+                onClick={() => handleQuickActionClick("Track my orders")}
+                className="shrink-0 bg-zinc-900 hover:bg-zinc-850 border border-zinc-850 text-zinc-400 hover:text-white px-2 py-1 rounded-full text-[10px] font-bold cursor-pointer transition-colors"
+              >
+                🚚 Track Orders
+              </button>
+              <button
+                type="button"
+                onClick={() => handleQuickActionClick("Get promo code")}
+                className="shrink-0 bg-zinc-900 hover:bg-zinc-850 border border-zinc-850 text-zinc-400 hover:text-white px-2 py-1 rounded-full text-[10px] font-bold cursor-pointer transition-colors"
+              >
+                🎫 Promo Code
+              </button>
+              <button
+                type="button"
+                onClick={() => handleQuickActionClick("Size guide advice")}
+                className="shrink-0 bg-zinc-900 hover:bg-zinc-850 border border-zinc-850 text-zinc-400 hover:text-white px-2 py-1 rounded-full text-[10px] font-bold cursor-pointer transition-colors"
+              >
+                📏 Sizing
+              </button>
+              <button
+                type="button"
+                onClick={() => handleQuickActionClick("Custom design tips")}
+                className="shrink-0 bg-zinc-900 hover:bg-zinc-850 border border-zinc-850 text-zinc-400 hover:text-white px-2 py-1 rounded-full text-[10px] font-bold cursor-pointer transition-colors"
+              >
+                🎨 Design Tips
+              </button>
             </div>
 
             {/* Input Form */}

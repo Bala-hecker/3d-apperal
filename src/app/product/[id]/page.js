@@ -233,38 +233,21 @@ export default function ProductDetailPage({ params }) {
         } else if (data) {
           setProduct(data);
           
+          const dbAllowName = data.allow_name !== undefined && data.allow_name !== null ? data.allow_name : null;
+          const dbAllowNumber = data.allow_number !== undefined && data.allow_number !== null ? data.allow_number : null;
+          const dbStockStatus = data.stock_status || null;
+
           const pers = parseDescriptionPersonalization(data.description);
-          if (data.description && (data.description.includes("<!--PERS:") || data.description.includes("<!--STOCK:"))) {
-            const enableName = pers.allowName;
-            const enableNumber = pers.allowNumber;
-            
-            setAllowPersonalization(enableName || enableNumber);
-            setAllowNamePersonalization(enableName);
-            setAllowNumberPersonalization(enableNumber);
-            setEnableCustomName(enableName);
-            setEnableCustomNumber(enableNumber);
-            setStockStatus(pers.stockStatus);
-          } else {
-            // Check localStorage setting
-            try {
-              const rawPers = localStorage.getItem(`apparel_personalization_${productId}`);
-              const rawPersName = localStorage.getItem(`apparel_pers_name_${productId}`);
-              const rawPersNumber = localStorage.getItem(`apparel_pers_number_${productId}`);
-              const rawStock = localStorage.getItem(`apparel_stock_${productId}`);
-              
-              const enableName = rawPersName === "true";
-              const enableNumber = rawPersNumber === "true";
-              
-              setAllowPersonalization(rawPers === "true" || enableName || enableNumber);
-              setAllowNamePersonalization(enableName);
-              setAllowNumberPersonalization(enableNumber);
-              setEnableCustomName(enableName);
-              setEnableCustomNumber(enableNumber);
-              setStockStatus(rawStock || "in_stock");
-            } catch {
-              // ignore and default to false / in_stock
-            }
-          }
+          const enableName = dbAllowName !== null ? dbAllowName : pers.allowName;
+          const enableNumber = dbAllowNumber !== null ? dbAllowNumber : pers.allowNumber;
+          const currentStock = dbStockStatus !== null ? dbStockStatus : (pers.stockStatus || "in_stock");
+
+          setAllowPersonalization(enableName || enableNumber);
+          setAllowNamePersonalization(enableName);
+          setAllowNumberPersonalization(enableNumber);
+          setEnableCustomName(enableName);
+          setEnableCustomNumber(enableNumber);
+          setStockStatus(currentStock);
         } else {
           loadLocalProductFallback();
         }
@@ -311,37 +294,21 @@ export default function ProductDetailPage({ params }) {
         if (localProduct) {
           setProduct(localProduct);
           
+          const dbAllowName = localProduct.allow_name !== undefined && localProduct.allow_name !== null ? localProduct.allow_name : null;
+          const dbAllowNumber = localProduct.allow_number !== undefined && localProduct.allow_number !== null ? localProduct.allow_number : null;
+          const dbStockStatus = localProduct.stock_status || null;
+
           const pers = parseDescriptionPersonalization(localProduct.description);
-          if (localProduct.description && (localProduct.description.includes("<!--PERS:") || localProduct.description.includes("<!--STOCK:"))) {
-            const enableName = pers.allowName;
-            const enableNumber = pers.allowNumber;
-            
-            setAllowPersonalization(enableName || enableNumber);
-            setAllowNamePersonalization(enableName);
-            setAllowNumberPersonalization(enableNumber);
-            setEnableCustomName(enableName);
-            setEnableCustomNumber(enableNumber);
-            setStockStatus(pers.stockStatus);
-          } else {
-            try {
-              const rawPers = localStorage.getItem(`apparel_personalization_${productId}`);
-              const rawPersName = localStorage.getItem(`apparel_pers_name_${productId}`);
-              const rawPersNumber = localStorage.getItem(`apparel_pers_number_${productId}`);
-              const rawStock = localStorage.getItem(`apparel_stock_${productId}`);
-              
-              const enableName = rawPersName === "true";
-              const enableNumber = rawPersNumber === "true";
-              
-              setAllowPersonalization(rawPers === "true" || enableName || enableNumber);
-              setAllowNamePersonalization(enableName);
-              setAllowNumberPersonalization(enableNumber);
-              setEnableCustomName(enableName);
-              setEnableCustomNumber(enableNumber);
-              setStockStatus(rawStock || "in_stock");
-            } catch {
-              // ignore
-            }
-          }
+          const enableName = dbAllowName !== null ? dbAllowName : pers.allowName;
+          const enableNumber = dbAllowNumber !== null ? dbAllowNumber : pers.allowNumber;
+          const currentStock = dbStockStatus !== null ? dbStockStatus : (pers.stockStatus || "in_stock");
+
+          setAllowPersonalization(enableName || enableNumber);
+          setAllowNamePersonalization(enableName);
+          setAllowNumberPersonalization(enableNumber);
+          setEnableCustomName(enableName);
+          setEnableCustomNumber(enableNumber);
+          setStockStatus(currentStock);
         } else {
           setErrorMsg("Garment product could not be retrieved from active catalog.");
         }
