@@ -1,5 +1,6 @@
 import { Inter, JetBrains_Mono } from "next/font/google";
 import "./globals.css";
+import AuthErrorShield from "@/components/AuthErrorShield";
 
 const inter = Inter({
   variable: "--font-sans",
@@ -23,7 +24,10 @@ export default function RootLayout({ children }) {
       className={`${inter.variable} ${jetbrainsMono.variable} h-full antialiased`}
       suppressHydrationWarning
     >
-      <body className="min-h-full flex flex-col font-sans" suppressHydrationWarning>{children}</body>
+      <body className="min-h-full flex flex-col font-sans" suppressHydrationWarning>
+        <AuthErrorShield />
+        {children}
+      </body>
     </html>
   );
 }

@@ -131,6 +131,12 @@ export default function CheckoutPaymentPage() {
               localStorage.removeItem("apparel_cart");
               localStorage.removeItem("apparel_checkout_session");
               
+              // Mark guest design as completed and clear session if user is not signed in
+              if (!userId) {
+                localStorage.setItem("apparel_guest_designed_once", "true");
+                sessionStorage.removeItem("apparel_current_session");
+              }
+              
               setPaymentSuccess(true);
               setIsSubmitting(false);
 

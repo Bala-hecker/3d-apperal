@@ -27,6 +27,7 @@ export default function CartDrawer({ isOpen, onClose }) {
   const [customerAddress, setCustomerAddress] = useState("");
   const [customerCity, setCustomerCity] = useState("");
   const [customerZip, setCustomerZip] = useState("");
+  const [saveAddressForFuture, setSaveAddressForFuture] = useState(true);
 
   // Promo Code State
   const [couponCode, setCouponCode] = useState("");
@@ -38,8 +39,29 @@ export default function CartDrawer({ isOpen, onClose }) {
     loadCart();
     const handleCartUpdate = () => loadCart();
     window.addEventListener("cart-updated", handleCartUpdate);
-    return () => window.removeEventListener("cart-updated", handleCartUpdate);
+    return () => {
+      window.removeEventListener("cart-updated", handleCartUpdate);
+    };
   }, []);
+
+  // Load saved address from localStorage when checkout/drawer opens
+  useEffect(() => {
+    if (isOpen) {
+      try {
+        const savedAddress = localStorage.getItem("apparel_saved_address");
+        if (savedAddress) {
+          const parsed = JSON.parse(savedAddress);
+          setCustomerName(parsed.name || "");
+          setCustomerPhone(parsed.phone || "");
+          setCustomerAddress(parsed.address || "");
+          setCustomerCity(parsed.city || "");
+          setCustomerZip(parsed.zip || "");
+        }
+      } catch (err) {
+        console.warn("Failed to load saved address:", err);
+      }
+    }
+  }, [isOpen]);
 
   const loadCart = () => {
     try {
@@ -200,7 +222,26 @@ export default function CartDrawer({ isOpen, onClose }) {
       finalTotalAmount
     };
 
-    localStorage.setItem("apparel_checkout_session", JSON.stringify(checkoutSession));
+    try {
+      localStorage.setItem("apparel_checkout_session", JSON.stringify(checkoutSession));
+      
+      // Save address for next time reuse if requested
+      if (saveAddressForFuture) {
+        const savedAddress = {
+          name: nameClean,
+          phone: phoneClean,
+          address: addressClean,
+          city: cityClean,
+          zip: zipClean
+        };
+        localStorage.setItem("apparel_saved_address", JSON.stringify(savedAddress));
+      } else {
+        localStorage.removeItem("apparel_saved_address");
+      }
+    } catch (e) {
+      console.warn("Failed to write to localStorage:", e);
+    }
+
     onClose();
     window.location.href = "/checkout/payment";
   };
@@ -407,6 +448,18 @@ export default function CartDrawer({ isOpen, onClose }) {
                         )}
                       </div>
                     </div>
+                    <div className="flex items-center gap-2 pt-1 select-none">
+                      <input 
+                        type="checkbox" 
+                        id="saveAddressCheckbox"
+                        checked={saveAddressForFuture} 
+                        onChange={(e) => setSaveAddressForFuture(e.target.checked)}
+                        className="rounded border-zinc-800 bg-zinc-900 text-indigo-600 focus:ring-indigo-500 focus:ring-offset-zinc-950 w-4 h-4 cursor-pointer"
+                      />
+                      <label htmlFor="saveAddressCheckbox" className="text-xs font-semibold text-zinc-400 cursor-pointer">
+                        Save address for future checkouts
+                      </label>
+                    </div>
                     {customerZip.trim().length >= 2 && (
                       <div className="bg-zinc-900/40 border border-zinc-900/60 rounded-xl p-3.5 space-y-1.5 text-[10px]">
                         <div className="flex justify-between text-zinc-500 font-semibold uppercase tracking-wider">
@@ -465,6 +518,21 @@ export default function CartDrawer({ isOpen, onClose }) {
                             <span className="text-sm font-extrabold text-indigo-400 uppercase tracking-widest">👕 Jersey: {item.customName} ({item.customNumber || "00"})</span>
                           </div>
                         )}
+                        {/* Return eligibility status badge */}
+                        <div className="mt-1.5 select-none">
+                          {(() => {
+                            const isCustom = !!(item.customDesignUrl || item.designCacheKey || (item.name && item.name.toLowerCase().includes("custom")) || item.customName || item.customNumber);
+                            return isCustom ? (
+                              <span className="inline-block text-[8px] font-extrabold px-1.5 py-0.5 rounded uppercase tracking-wider bg-rose-950/20 border border-rose-900/30 text-rose-400">
+                                🔒 Final Sale
+                              </span>
+                            ) : (
+                              <span className="inline-block text-[8px] font-extrabold px-1.5 py-0.5 rounded uppercase tracking-wider bg-emerald-950/20 border border-emerald-900/30 text-emerald-450">
+                                🔄 14-Day Return
+                              </span>
+                            );
+                          })()}
+                        </div>
                         <div className="flex items-center justify-between mt-2">
                           <div className="flex items-center gap-1.5">
                             <span className="text-sm text-zinc-500 font-semibold uppercase">Size:</span>

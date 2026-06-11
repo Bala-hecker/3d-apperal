@@ -62,18 +62,17 @@ export async function POST(request) {
           hasPreviousOrders = true;
         }
       } else if (email) {
-        // Guest user check by email in shipping details
-        const { data: allOrders, error: orderErr } = await supabase
+        // Guest user check by email in shipping details using fast jsonb query
+        const cleanEmail = email.trim().toLowerCase();
+        const { data: existingGuestOrders, error: orderErr } = await supabase
           .from("orders")
-          .select("shipping_details")
-          .neq("status", "cancelled");
+          .select("id")
+          .eq("shipping_details->>email", cleanEmail)
+          .neq("status", "cancelled")
+          .limit(1);
 
-        if (!orderErr && allOrders) {
-          const matchingOrder = allOrders.find(o => {
-            const shipEmail = o.shipping_details?.email || "";
-            return shipEmail.trim().toLowerCase() === email.trim().toLowerCase();
-          });
-          if (matchingOrder) hasPreviousOrders = true;
+        if (!orderErr && existingGuestOrders && existingGuestOrders.length > 0) {
+          hasPreviousOrders = true;
         }
       }
 

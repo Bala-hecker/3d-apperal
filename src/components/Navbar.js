@@ -361,36 +361,44 @@ export default function Navbar({ children }) {
               )}
 
               {/* Wishlist icon */}
-              {session && (
-                <button
-                  onClick={() => setIsWishlistOpen(true)}
-                  className="relative p-2 rounded-lg text-zinc-400 hover:text-rose-400 hover:bg-zinc-900 border border-zinc-900 hover:border-zinc-800 transition-all cursor-pointer"
-                  title="Wishlist"
-                >
-                  <Heart className="w-4 h-4" />
-                  {wishlistCount > 0 && (
-                    <span className="absolute -top-1 -right-1 w-4 h-4 bg-rose-500 text-white rounded-full text-sm font-extrabold flex items-center justify-center shadow-md">
-                      {wishlistCount > 9 ? "9+" : wishlistCount}
-                    </span>
-                  )}
-                </button>
-              )}
+              <button
+                onClick={() => {
+                  if (!session) {
+                    router.push("/auth");
+                  } else {
+                    setIsWishlistOpen(true);
+                  }
+                }}
+                className="relative p-2 rounded-lg text-zinc-400 hover:text-rose-400 hover:bg-zinc-900 border border-zinc-900 hover:border-zinc-800 transition-all cursor-pointer"
+                title="Wishlist"
+              >
+                <Heart className="w-4 h-4" />
+                {session && wishlistCount > 0 && (
+                  <span className="absolute -top-1 -right-1 w-4 h-4 bg-rose-500 text-white rounded-full text-sm font-extrabold flex items-center justify-center shadow-md">
+                    {wishlistCount > 9 ? "9+" : wishlistCount}
+                  </span>
+                )}
+              </button>
 
               {/* Cart */}
-              {session && (
-                <button
-                  onClick={() => setIsCartOpen(true)}
-                  className="relative p-2 rounded-lg text-zinc-400 hover:text-white hover:bg-zinc-900 border border-zinc-900 hover:border-zinc-800 transition-all cursor-pointer"
-                  title="Shopping Cart"
-                >
-                  <ShoppingBag className="w-4 h-4" />
-                  {cartCount > 0 && (
-                    <span className="absolute -top-1 -right-1 w-4 h-4 bg-indigo-500 text-white rounded-full text-sm font-extrabold flex items-center justify-center shadow-md animate-bounce">
-                      {cartCount > 9 ? "9+" : cartCount}
-                    </span>
-                  )}
-                </button>
-              )}
+              <button
+                onClick={() => {
+                  if (!session) {
+                    router.push("/auth");
+                  } else {
+                    setIsCartOpen(true);
+                  }
+                }}
+                className="relative p-2 rounded-lg text-zinc-400 hover:text-white hover:bg-zinc-900 border border-zinc-900 hover:border-zinc-800 transition-all cursor-pointer"
+                title="Shopping Cart"
+              >
+                <ShoppingBag className="w-4 h-4" />
+                {session && cartCount > 0 && (
+                  <span className="absolute -top-1 -right-1 w-4 h-4 bg-indigo-500 text-white rounded-full text-sm font-extrabold flex items-center justify-center shadow-md animate-bounce">
+                    {cartCount > 9 ? "9+" : cartCount}
+                  </span>
+                )}
+              </button>
 
               {/* Theme Selector Palette */}
               <div className="relative">

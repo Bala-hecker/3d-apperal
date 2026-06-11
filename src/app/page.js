@@ -37,9 +37,14 @@ function MagneticProductCard({ product, index, setBgColor }) {
     return () => window.removeEventListener("wishlist-updated", handleUpdate);
   }, [product.id]);
 
-  const handleToggleWishlist = (e) => {
+  const handleToggleWishlist = async (e) => {
     e.preventDefault();
     e.stopPropagation();
+    const { data: { session } } = await supabase.auth.getSession();
+    if (!session) {
+      window.location.href = "/auth";
+      return;
+    }
     const wl = JSON.parse(localStorage.getItem("apparel_wishlist") || "[]");
     let updated;
     if (isWishlisted) {
@@ -461,7 +466,7 @@ export default function HomeLandingPage() {
             {[
               { emoji: "🚀", title: "Free Express Shipping", sub: "On all orders over ₹1,999" },
               { emoji: "🔒", title: "Secure Payments", sub: "UPI, Stripe, Net Banking" },
-              { emoji: "🛠️", title: "Custom Tailored", sub: "Bespoke items, no returns" },
+              { emoji: "🛠️", title: "Custom Tailored", sub: "Crafted to your exact specs" },
               { emoji: "🏆", title: "Premium Quality", sub: "380 GSM certified fabrics" },
             ].map((badge, i) => (
               <div key={i} className="trust-badge flex flex-col items-center gap-2.5 group">
@@ -550,7 +555,6 @@ export default function HomeLandingPage() {
                 {[
                   "help@thread3d.com",
                   "Shipping Policy",
-                  "Returns & Refunds",
                   "Privacy Policy"
                 ].map((item, i) => (
                   <div key={i} className="text-xs text-zinc-500 font-medium">{item}</div>

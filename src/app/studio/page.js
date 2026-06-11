@@ -24,7 +24,12 @@ import {
   ChevronRight,
   RefreshCw,
   Plus,
-  ShieldCheck
+  ShieldCheck,
+  Truck,
+  Lock,
+  X,
+  Tag,
+  ShoppingBag
 } from "lucide-react";
 import Link from "next/link";
 import Navbar from "@/components/Navbar";
@@ -170,6 +175,32 @@ export default function StudioPage() {
   const [publishDescription, setPublishDescription] = useState("");
   const [isPublishing, setIsPublishing] = useState(false);
 
+  // Direct Checkout States
+  const [showCheckoutModal, setShowCheckoutModal] = useState(false);
+  const [customerName, setCustomerName] = useState("");
+  const [customerPhone, setCustomerPhone] = useState("");
+  const [customerAddress, setCustomerAddress] = useState("");
+  const [customerCity, setCustomerCity] = useState("");
+  const [customerZip, setCustomerZip] = useState("");
+  const [saveAddressForFuture, setSaveAddressForFuture] = useState(true);
+  const [selectedSize, setSelectedSize] = useState("M");
+  const [formErrors, setFormErrors] = useState({});
+  const [isSubmittingCheckout, setIsSubmittingCheckout] = useState(false);
+
+  // Custom design details to purchase
+  const [currentDesignDataUrl, setCurrentDesignDataUrl] = useState("");
+  const [currentFinalPrice, setCurrentFinalPrice] = useState(0);
+  const [currentCustomProductId, setCurrentCustomProductId] = useState("");
+
+  // Promo code states inside studio checkout
+  const [couponCode, setCouponCode] = useState("");
+  const [appliedDiscount, setAppliedDiscount] = useState(0);
+  const [couponSuccess, setCouponSuccess] = useState(null);
+  const [couponError, setCouponError] = useState(null);
+
+  // Guest One-Time Design Purchase Limit States
+  const [isGuestLimitExceeded, setIsGuestLimitExceeded] = useState(false);
+
   // Admin Identification
   const adminEmailSetting = process.env.NEXT_PUBLIC_ADMIN_EMAIL || "";
   const adminEmails = adminEmailSetting 
@@ -179,6 +210,7 @@ export default function StudioPage() {
 
   // Security Audit Logging helper
   const addAuditLog = async (actionText) => {
+    if (!session) return;
     try {
       const email = session?.user?.email || "system-admin";
       await supabase.from("system_logs").insert([{ operator: email, action: actionText }]);
@@ -355,27 +387,62 @@ export default function StudioPage() {
   useEffect(() => {
     const checkAuthAndFetch = async () => {
       const { data: { session: currentSession } } = await supabase.auth.getSession();
-      if (!currentSession) {
-        router.push("/auth");
-      } else {
-        setSession(currentSession);
-        setCheckingAuth(false);
-        await fetchProducts();
-      }
+      setSession(currentSession);
+      setCheckingAuth(false);
+      await fetchProducts();
     };
     checkAuthAndFetch();
 
     const { data: { subscription } } = supabase.auth.onAuthStateChange((_event, newSession) => {
-      if (!newSession) {
-        router.push("/auth");
-      } else {
-        setSession(newSession);
-        setCheckingAuth(false);
-      }
+      setSession(newSession);
+      setCheckingAuth(false);
     });
 
     return () => subscription.unsubscribe();
   }, [router]);
+
+  // Load saved address from localStorage on mount for inline checkout
+  useEffect(() => {
+    try {
+      const savedAddress = localStorage.getItem("apparel_saved_address");
+      if (savedAddress) {
+        const parsed = JSON.parse(savedAddress);
+        setCustomerName(parsed.name || "");
+        setCustomerPhone(parsed.phone || "");
+        setCustomerAddress(parsed.address || "");
+        setCustomerCity(parsed.city || "");
+        setCustomerZip(parsed.zip || "");
+      }
+    } catch (err) {
+      console.warn("Failed to load saved address:", err);
+    }
+  }, []);
+
+  // Guest One-Time Design Limit Check
+  useEffect(() => {
+    if (checkingAuth) return;
+
+    // Only apply limits to guests (session is null)
+    if (session) {
+      setIsGuestLimitExceeded(false);
+      return;
+    }
+
+    const hasDesignedOnce = localStorage.getItem("apparel_guest_designed_once") === "true";
+    const isCurrentSessionActive = sessionStorage.getItem("apparel_current_session") === "active";
+
+    if (hasDesignedOnce && !isCurrentSessionActive) {
+      setIsGuestLimitExceeded(true);
+    } else {
+      setIsGuestLimitExceeded(false);
+      // Initialize current session as active
+      try {
+        sessionStorage.setItem("apparel_current_session", "active");
+      } catch (err) {
+        console.warn("sessionStorage write blocked:", err);
+      }
+    }
+  }, [session, checkingAuth]);
 
   const fetchProducts = async () => {
     setLoadingProducts(true);
@@ -403,10 +470,17 @@ export default function StudioPage() {
       setLoadingProducts(false);
     }
   };
+  const startGuestTrialIfNeeded = () => {
+    if (session) return;
+    const existing = localStorage.getItem("apparel_guest_designed_once");
+    if (!existing) {
+      localStorage.setItem("apparel_guest_designed_once", "true");
+    }
+  };
 
   // 2. Initialize Fabric.js (Initialized EXACTLY ONCE, completely decoupled from focus re-renders to prevent canvas clears)
   useEffect(() => {
-    if (checkingAuth || !session) return;
+    if (checkingAuth) return;
     if (hasInitializedFabricRef.current) return; // Prevent any double-runs or focus-induced clears!
 
     hasInitializedFabricRef.current = true;
@@ -431,6 +505,7 @@ export default function StudioPage() {
       // Event listener to record history on modifications
       const saveState = () => {
         if (!canvas) return;
+        startGuestTrialIfNeeded();
         const json = JSON.stringify(canvas.toJSON());
         setCanvasHistory((prev) => {
           const updated = prev.slice(0, historyIndex + 1);
@@ -683,7 +758,7 @@ export default function StudioPage() {
 
   // 3. Initialize Three.js Scene (Initialized EXACTLY ONCE, completely decoupled from focus re-renders to prevent WebGL Context Loss)
   useEffect(() => {
-    if (checkingAuth || !session || !threeContainerRef.current) return;
+    if (checkingAuth || !threeContainerRef.current) return;
     if (hasInitializedThreeRef.current) return; // Prevent any double-runs or focus-induced updates!
 
     hasInitializedThreeRef.current = true;
@@ -1066,6 +1141,7 @@ export default function StudioPage() {
   };
 
   const handleGarmentColorChange = (color) => {
+    startGuestTrialIfNeeded();
     setGarmentColor(color);
 
     // 1. Update Fabric Canvas Background Color and instantly refresh dynamic WebGL texture
@@ -1240,7 +1316,220 @@ export default function StudioPage() {
     reader.readAsDataURL(file);
   };
 
+  const getShippingDetails = (zip) => {
+    const cleanZip = (zip || "").trim().replace(/\D/g, "");
+    
+    if (!cleanZip) {
+      return { distance: 0, fee: 0, mode: "Enter Postal Code" };
+    }
+    
+    let distance = 950;
+    let fee = 199;
+    let mode = "National Air Express";
+
+    if (cleanZip.length >= 2) {
+      const prefix = cleanZip.substring(0, 2);
+      const prefixNum = parseInt(prefix, 10);
+      
+      if (prefixNum >= 60 && prefixNum <= 64) {
+        if (prefixNum === 60) {
+          distance = 45;
+          fee = 49;
+          mode = "Local Courier Service";
+        } else {
+          distance = 250;
+          fee = 99;
+          mode = "Intra-State Express";
+        }
+      } else if (prefixNum >= 56 && prefixNum <= 59) {
+        distance = 350;
+        fee = 99;
+        mode = "Regional Fast Courier";
+      } else if (prefixNum >= 50 && prefixNum <= 53) {
+        distance = 630;
+        fee = 149;
+        mode = "National Surface Line";
+      } else if (prefixNum >= 67 && prefixNum <= 69) {
+        distance = 680;
+        fee = 149;
+        mode = "National Surface Line";
+      } else if (prefixNum >= 40 && prefixNum <= 44) {
+        distance = 1180;
+        fee = 249;
+        mode = "Premium Zone Delivery";
+      } else if (prefixNum >= 70 && prefixNum <= 74) {
+        distance = 1660;
+        fee = 299;
+        mode = "Premium Zone Delivery";
+      } else if ((prefixNum >= 11 && prefixNum <= 28) || prefixNum === 30 || prefixNum === 31 || prefixNum === 32 || prefixNum === 33 || prefixNum === 34) {
+        distance = 2200;
+        fee = 299;
+        mode = "Premium Zone Delivery";
+      } else {
+        distance = 950;
+        fee = 199;
+        mode = "National Air Express";
+      }
+    }
+
+    return { distance, fee, mode };
+  };
+
+  const handleApplyCoupon = async (e) => {
+    e.preventDefault();
+    setCouponError(null);
+    setCouponSuccess(null);
+    const code = couponCode.trim().toUpperCase();
+    if (!code) return;
+
+    try {
+      const { data: { session: currentSession } } = await supabase.auth.getSession();
+      const userId = currentSession?.user?.id || null;
+      const email = currentSession?.user?.email || null;
+
+      const response = await fetch("/api/coupons/validate", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ code, userId, email })
+      });
+
+      const resData = await response.json();
+      if (!response.ok) {
+        setCouponError(resData.error || "Invalid coupon code.");
+        setAppliedDiscount(0);
+      } else if (resData.success && resData.coupon) {
+        const disc = resData.coupon.discount_percent;
+        setAppliedDiscount(disc);
+        setCouponSuccess(`${disc}% discount applied successfully!`);
+      }
+    } catch (err) {
+      setCouponError("Failed to validate coupon code.");
+      setAppliedDiscount(0);
+    }
+  };
+
+  const handleCheckoutSubmit = async (e) => {
+    e.preventDefault();
+    
+    // Form Validation Checks
+    const errors = {};
+    const nameClean = customerName.trim();
+    const phoneClean = customerPhone.trim();
+    const addressClean = customerAddress.trim();
+    const cityClean = customerCity.trim();
+    const zipClean = customerZip.trim();
+
+    if (!nameClean) {
+      errors.name = "Recipient name is required.";
+    } else if (nameClean.length < 3) {
+      errors.name = "Name must be at least 3 characters.";
+    } else if (!/^[a-zA-Z\s]+$/.test(nameClean)) {
+      errors.name = "Name can only contain letters.";
+    }
+
+    if (!phoneClean) {
+      errors.phone = "Phone number is required.";
+    } else if (!/^\d{10}$/.test(phoneClean.replace(/\D/g, ""))) {
+      errors.phone = "Phone number must be exactly 10 digits.";
+    }
+
+    if (!addressClean) {
+      errors.address = "Street address is required.";
+    } else if (addressClean.length < 5) {
+      errors.address = "Please enter a complete address (minimum 5 characters).";
+    }
+
+    if (!cityClean) {
+      errors.city = "City is required.";
+    } else if (cityClean.length < 2) {
+      errors.city = "City must be at least 2 characters.";
+    }
+
+    if (!zipClean) {
+      errors.zip = "Postal/ZIP code is required.";
+    } else if (!/^\d{6}$/.test(zipClean.replace(/\D/g, ""))) {
+      errors.zip = "PIN code must be exactly 6 digits.";
+    }
+
+    setFormErrors(errors);
+    if (Object.keys(errors).length > 0) {
+      return;
+    }
+
+    setIsSubmittingCheckout(true);
+
+    const shippingInfo = getShippingDetails(zipClean);
+    const deliveryFee = shippingInfo.fee;
+    const discountAmount = appliedDiscount > 0 ? (currentFinalPrice * (appliedDiscount / 100)) : 0;
+    const finalTotalAmount = Math.max(0, currentFinalPrice - discountAmount + deliveryFee);
+
+    const itemId = `cart_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
+    const cartItem = {
+      id: itemId,
+      productId: currentCustomProductId,
+      name: `Custom Designed ${activeProduct.name}`,
+      baseTexture: currentDesignDataUrl,
+      glbUrl: activeProduct.glb_file_url,
+      thumbnailUrl: currentDesignDataUrl,
+      size: selectedSize,
+      quantity: 1,
+      addedAt: new Date().toISOString(),
+      price: currentFinalPrice,
+      fabric: selectedFabric,
+      customDesignUrl: currentDesignDataUrl
+    };
+
+    const checkoutSession = {
+      cart: [cartItem],
+      shippingDetails: {
+        name: nameClean,
+        phone: phoneClean,
+        address: addressClean,
+        city: cityClean,
+        zip: zipClean
+      },
+      couponCode: couponCode.trim().toUpperCase(),
+      subtotal: currentFinalPrice,
+      discountAmount: discountAmount,
+      deliveryFee: deliveryFee,
+      finalTotalAmount: finalTotalAmount
+    };
+
+    try {
+      // Save directly to checkout session (bypass cart!)
+      localStorage.setItem("apparel_checkout_session", JSON.stringify(checkoutSession));
+      
+      // Save address for future reuse
+      if (saveAddressForFuture) {
+        const savedAddress = {
+          name: nameClean,
+          phone: phoneClean,
+          address: addressClean,
+          city: cityClean,
+          zip: zipClean
+        };
+        localStorage.setItem("apparel_saved_address", JSON.stringify(savedAddress));
+      } else {
+        localStorage.removeItem("apparel_saved_address");
+      }
+
+      setShowCheckoutModal(false);
+      setIsSubmittingCheckout(false);
+      window.location.href = "/checkout/payment";
+    } catch (e) {
+      console.error("Failed to compile direct checkout session:", e);
+      setIsSubmittingCheckout(false);
+      alert("Checkout failed to initiate. Please try again.");
+    }
+  };
+
   const handleAddToCart = async () => {
+    const { data: { session: currentSession } } = await supabase.auth.getSession();
+    if (!currentSession) {
+      router.push("/auth");
+      return;
+    }
+
     if (!activeProduct) {
       alert("Please select a garment to customize first!");
       return;
@@ -1266,7 +1555,7 @@ export default function StudioPage() {
     `;
     loaderOverlay.innerHTML = `
       <div style="width:50px; height:50px; border:4px solid #3f3f46; border-top-color:#6366f1; border-radius:50%; animation:spin 1s linear infinite; margin-bottom:20px;"></div>
-      <p style="font-weight:bold; font-size:14px; margin-top:16px;">Saving Custom Design...</p>
+      <p style="font-weight:bold; font-size:14px; margin-top:16px;">Preparing Order Checkout...</p>
       <p style="font-size:11px; color:#71717a; margin-top:6px;">Please wait while we package your custom garment details.</p>
       <style>@keyframes spin { to { transform: rotate(360deg); } }</style>
     `;
@@ -1286,41 +1575,30 @@ export default function StudioPage() {
 
       const customProductId = `custom_${Date.now()}`;
 
-      // 2. Build the custom catalog product object
-      const customProduct = {
-        id: customProductId,
-        name: `Custom ${activeProduct.name}`,
-        glb_file_url: activeProduct.glb_file_url,
-        texture_url: designDataUrl,
-        price: finalPrice,
-        category: activeProduct.category || "custom",
-        description: `A bespoke customized ${activeProduct.name} crafted inside our interactive 3D design configurator using premium ${fabricProps.label}.`,
-        is_template: false,
-        gallery_urls: designDataUrl
-      };
+      // Reset coupon states and errors
+      setCouponCode("");
+      setAppliedDiscount(0);
+      setCouponSuccess(null);
+      setCouponError(null);
+      setFormErrors({});
+      setSelectedSize("M");
 
-      // 3. Retrieve and update the local products catalog in localStorage
-      const storedLocal = localStorage.getItem("apparel_products_local");
-      const localProducts = storedLocal ? JSON.parse(storedLocal) : [];
-      
-      const updatedLocalProducts = [customProduct, ...localProducts.filter(p => p.id !== customProductId)];
-      localStorage.setItem("apparel_products_local", JSON.stringify(updatedLocalProducts));
-
-      // 4. Log custom design audit entry
-      await addAuditLog(`Saved customer designed catalog product "${customProduct.name}" (ID: ${customProductId}) with base price: ₹${finalPrice.toLocaleString('en-IN')}.`);
+      setCurrentDesignDataUrl(designDataUrl);
+      setCurrentFinalPrice(finalPrice);
+      setCurrentCustomProductId(customProductId);
 
       if (document.body.contains(loaderOverlay)) {
         document.body.removeChild(loaderOverlay);
       }
 
-      alert(`🎉 Custom design saved successfully! Opening your product detail page...`);
-      router.push(`/product/${customProductId}`);
+      // Open shipping details modal directly inside studio page
+      setShowCheckoutModal(true);
     } catch (err) {
-      console.error("Design save failed:", err);
+      console.error("Direct checkout preparation failed:", err);
       if (document.body.contains(loaderOverlay)) {
         document.body.removeChild(loaderOverlay);
       }
-      alert("Could not save design. Please try again.");
+      alert("Could not initialize checkout. Please try again.");
     }
   };
 
@@ -1328,6 +1606,11 @@ export default function StudioPage() {
     await supabase.auth.signOut();
     router.push("/auth");
   };
+
+  const shippingInfo = getShippingDetails(customerZip);
+  const deliveryFee = customerZip.trim().length >= 2 ? shippingInfo.fee : 0;
+  const discountAmount = appliedDiscount > 0 ? (currentFinalPrice * (appliedDiscount / 100)) : 0;
+  const finalTotalAmount = Math.max(0, currentFinalPrice - discountAmount + deliveryFee);
 
   if (checkingAuth) {
     return (
@@ -1352,12 +1635,13 @@ export default function StudioPage() {
             <span>Publish to Catalog</span>
           </button>
         )}
+
         <button
           onClick={handleAddToCart}
           className="text-xs font-semibold px-3.5 py-1.5 bg-gradient-to-r from-emerald-600 to-teal-600 hover:from-emerald-500 hover:to-teal-500 text-white rounded-xl flex items-center gap-1.5 transition-all shadow-md shadow-emerald-600/10 cursor-pointer"
         >
           <Sparkles className="w-3.5 h-3.5 animate-pulse" />
-          <span>Save Design</span>
+          <span>Buy Now</span>
         </button>
       </Navbar>
 
@@ -1472,7 +1756,10 @@ export default function StudioPage() {
               {Object.entries(fabricProperties).map(([key, value]) => (
                 <button
                   key={key}
-                  onClick={() => setSelectedFabric(key)}
+                  onClick={() => {
+                    setSelectedFabric(key);
+                    startGuestTrialIfNeeded();
+                  }}
                   className={`w-full text-left p-2.5 rounded-xl border transition-all flex flex-col gap-1 group cursor-pointer ${
                     selectedFabric === key
                       ? "bg-indigo-500/10 border-indigo-500/30 shadow-inner"
@@ -1905,6 +2192,338 @@ export default function StudioPage() {
                 )}
               </button>
             </div>
+          </div>
+        </div>
+      )}
+
+      {/* Sleek Direct Checkout Modal */}
+      {showCheckoutModal && (
+        <div className="fixed inset-0 bg-zinc-950/85 backdrop-blur-md flex items-center justify-center z-50 p-4 animate-in fade-in duration-200 overflow-y-auto">
+          <div className="w-full max-w-md bg-zinc-900 border border-zinc-800 rounded-3xl p-6 shadow-2xl relative my-8 max-h-[90vh] overflow-y-auto scrollbar-thin scrollbar-thumb-zinc-800">
+            
+            {/* Header */}
+            <div className="flex items-center justify-between pb-4 border-b border-zinc-800/60 mb-5">
+              <div className="flex items-center gap-2">
+                <ShoppingBag className="w-5 h-5 text-indigo-400" />
+                <h3 className="text-base font-bold text-white uppercase tracking-wider">Checkout Design</h3>
+              </div>
+              <button 
+                type="button"
+                onClick={() => setShowCheckoutModal(false)} 
+                className="p-1 hover:bg-zinc-800 rounded-lg text-zinc-500 hover:text-white transition-colors cursor-pointer"
+              >
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+
+            {/* Custom Product Preview Card */}
+            {activeProduct && (
+              <div className="bg-zinc-950/40 border border-zinc-800/80 rounded-2xl p-4 flex gap-4 items-center mb-5">
+                <div className="w-16 h-16 bg-zinc-950 border border-zinc-850 rounded-lg overflow-hidden shrink-0 flex items-center justify-center">
+                  <img src={currentDesignDataUrl} alt="Custom Apparel" className="w-full h-full object-cover" />
+                </div>
+                <div className="flex-1 min-w-0">
+                  <h4 className="font-extrabold text-xs text-zinc-200 truncate">
+                    Custom Designed {activeProduct.name}
+                  </h4>
+                  <p className="text-[10px] text-zinc-500 font-semibold uppercase tracking-wider mt-1">
+                    Fabric: <span className="text-indigo-400">{fabricProperties[selectedFabric]?.label || selectedFabric}</span>
+                  </p>
+                </div>
+              </div>
+            )}
+
+            {/* Checkout Form */}
+            <form onSubmit={handleCheckoutSubmit} className="space-y-4">
+              
+              {/* Size Selection */}
+              <div>
+                <label className="block text-xs font-bold text-zinc-400 uppercase tracking-wider mb-2">Select Garment Size</label>
+                <div className="flex gap-2">
+                  {["S", "M", "L", "XL"].map((size) => (
+                    <button
+                      key={size}
+                      type="button"
+                      onClick={() => setSelectedSize(size)}
+                      className={`flex-1 text-xs font-bold py-2 border rounded-xl transition-all cursor-pointer ${
+                        selectedSize === size
+                          ? "bg-indigo-600 border-indigo-500 text-white shadow-md shadow-indigo-500/20"
+                          : "bg-zinc-950 border-zinc-850 text-zinc-500 hover:text-white hover:border-zinc-700"
+                      }`}
+                    >
+                      {size}
+                    </button>
+                  ))}
+                </div>
+              </div>
+
+              <div className="border-t border-zinc-850/60 my-4 pt-3">
+                <h4 className="text-xs font-bold text-zinc-300 uppercase tracking-wider mb-3 flex items-center gap-1.5">
+                  <Truck className="w-3.5 h-3.5 text-indigo-400" />
+                  <span>Delivery Address</span>
+                </h4>
+              </div>
+
+              {/* Recipient Name */}
+              <div>
+                <label className="block text-[10px] font-bold text-zinc-500 uppercase tracking-wider mb-1.5">Recipient Name</label>
+                <input 
+                  type="text" 
+                  required 
+                  value={customerName} 
+                  onChange={(e) => {
+                    setCustomerName(e.target.value);
+                    if (formErrors.name) setFormErrors(prev => ({ ...prev, name: null }));
+                  }} 
+                  placeholder="e.g. John Doe"
+                  className={`w-full bg-zinc-950 border rounded-xl px-3 py-2 text-xs text-white placeholder-zinc-700 focus:outline-none focus:ring-1 ${
+                    formErrors.name 
+                      ? "border-red-500/80 focus:border-red-500 focus:ring-red-500/50" 
+                      : "border-zinc-850 focus:border-indigo-500 focus:ring-indigo-500/50"
+                  }`} 
+                />
+                {formErrors.name && (
+                  <p className="text-[10px] text-red-400 mt-1 font-medium select-none">{formErrors.name}</p>
+                )}
+              </div>
+
+              {/* Contact Phone */}
+              <div>
+                <label className="block text-[10px] font-bold text-zinc-500 uppercase tracking-wider mb-1.5">Contact Phone</label>
+                <input 
+                  type="tel" 
+                  required 
+                  value={customerPhone} 
+                  onChange={(e) => {
+                    setCustomerPhone(e.target.value);
+                    if (formErrors.phone) setFormErrors(prev => ({ ...prev, phone: null }));
+                  }} 
+                  placeholder="10-digit mobile number"
+                  className={`w-full bg-zinc-950 border rounded-xl px-3 py-2 text-xs text-white placeholder-zinc-700 focus:outline-none focus:ring-1 ${
+                    formErrors.phone 
+                      ? "border-red-500/80 focus:border-red-500 focus:ring-red-500/50" 
+                      : "border-zinc-850 focus:border-indigo-500 focus:ring-indigo-500/50"
+                  }`} 
+                />
+                {formErrors.phone && (
+                  <p className="text-[10px] text-red-400 mt-1 font-medium select-none">{formErrors.phone}</p>
+                )}
+              </div>
+
+              {/* Street Address */}
+              <div>
+                <label className="block text-[10px] font-bold text-zinc-500 uppercase tracking-wider mb-1.5">Street Address</label>
+                <input 
+                  type="text" 
+                  required 
+                  value={customerAddress} 
+                  onChange={(e) => {
+                    setCustomerAddress(e.target.value);
+                    if (formErrors.address) setFormErrors(prev => ({ ...prev, address: null }));
+                  }} 
+                  placeholder="House No, Street Name, Locality"
+                  className={`w-full bg-zinc-950 border rounded-xl px-3 py-2 text-xs text-white placeholder-zinc-700 focus:outline-none focus:ring-1 ${
+                    formErrors.address 
+                      ? "border-red-500/80 focus:border-red-500 focus:ring-red-500/50" 
+                      : "border-zinc-850 focus:border-indigo-500 focus:ring-indigo-500/50"
+                  }`} 
+                />
+                {formErrors.address && (
+                  <p className="text-[10px] text-red-400 mt-1 font-medium select-none">{formErrors.address}</p>
+                )}
+              </div>
+
+              {/* City & Zip Grid */}
+              <div className="grid grid-cols-2 gap-4">
+                <div>
+                  <label className="block text-[10px] font-bold text-zinc-500 uppercase tracking-wider mb-1.5">City / Region</label>
+                  <input 
+                    type="text" 
+                    required 
+                    value={customerCity} 
+                    onChange={(e) => {
+                      setCustomerCity(e.target.value);
+                      if (formErrors.city) setFormErrors(prev => ({ ...prev, city: null }));
+                    }} 
+                    placeholder="e.g. Chennai"
+                    className={`w-full bg-zinc-950 border rounded-xl px-3 py-2 text-xs text-white placeholder-zinc-700 focus:outline-none focus:ring-1 ${
+                      formErrors.city 
+                        ? "border-red-500/80 focus:border-red-500 focus:ring-red-500/50" 
+                        : "border-zinc-850 focus:border-indigo-500 focus:ring-indigo-500/50"
+                    }`} 
+                  />
+                  {formErrors.city && (
+                    <p className="text-[10px] text-red-400 mt-1 font-medium select-none">{formErrors.city}</p>
+                  )}
+                </div>
+                <div>
+                  <label className="block text-[10px] font-bold text-zinc-500 uppercase tracking-wider mb-1.5">ZIP / PIN Code</label>
+                  <input 
+                    type="text" 
+                    required 
+                    value={customerZip} 
+                    onChange={(e) => {
+                      setCustomerZip(e.target.value);
+                      if (formErrors.zip) setFormErrors(prev => ({ ...prev, zip: null }));
+                    }} 
+                    placeholder="6-digit PIN code"
+                    className={`w-full bg-zinc-950 border rounded-xl px-3 py-2 text-xs text-white placeholder-zinc-700 focus:outline-none focus:ring-1 ${
+                      formErrors.zip 
+                        ? "border-red-500/80 focus:border-red-500 focus:ring-red-500/50" 
+                        : "border-zinc-850 focus:border-indigo-500 focus:ring-indigo-500/50"
+                    }`} 
+                  />
+                  {formErrors.zip && (
+                    <p className="text-[10px] text-red-400 mt-1 font-medium select-none">{formErrors.zip}</p>
+                  )}
+                </div>
+              </div>
+
+              {/* Save Address Checkbox */}
+              <div className="flex items-center gap-2 pt-1 select-none">
+                <input 
+                  type="checkbox" 
+                  id="saveAddressCheckboxStudio"
+                  checked={saveAddressForFuture} 
+                  onChange={(e) => setSaveAddressForFuture(e.target.checked)}
+                  className="rounded border-zinc-800 bg-zinc-950 text-indigo-600 focus:ring-indigo-500 focus:ring-offset-zinc-900 w-4 h-4 cursor-pointer"
+                />
+                <label htmlFor="saveAddressCheckboxStudio" className="text-xs font-semibold text-zinc-400 cursor-pointer">
+                  Save address for future checkouts
+                </label>
+              </div>
+
+              {/* ZIP Mode Estimation */}
+              {customerZip.trim().length >= 2 && (
+                <div className="bg-zinc-950/50 border border-zinc-850/60 rounded-xl p-3 space-y-1 text-[10px]">
+                  <div className="flex justify-between text-zinc-500 font-semibold uppercase tracking-wider">
+                    <span>Shipping Mode:</span>
+                    <span className="text-zinc-300 font-bold">{shippingInfo.mode}</span>
+                  </div>
+                  <div className="flex justify-between text-zinc-500 font-semibold uppercase tracking-wider pt-1 border-t border-zinc-900/50">
+                    <span>Delivery Charge:</span>
+                    <span className="text-indigo-400 font-extrabold">₹{shippingInfo.fee}</span>
+                  </div>
+                </div>
+              )}
+
+              {/* Coupon Field */}
+              <div className="bg-zinc-950/30 border border-zinc-850 rounded-xl p-3.5 space-y-2 mt-2">
+                <div className="flex gap-2">
+                  <input 
+                    type="text" 
+                    placeholder="PROMO CODE (e.g. THREAD3D)" 
+                    value={couponCode} 
+                    onChange={(e) => setCouponCode(e.target.value)} 
+                    className="bg-zinc-950 border border-zinc-850 px-3 py-1.5 rounded-lg text-xs font-mono font-bold text-zinc-200 focus:outline-none flex-1 uppercase" 
+                  />
+                  <button 
+                    type="button" 
+                    onClick={handleApplyCoupon} 
+                    className="bg-indigo-600 hover:bg-indigo-500 text-white font-bold text-xs px-3.5 py-1.5 rounded-lg transition-colors cursor-pointer"
+                  >
+                    Apply
+                  </button>
+                </div>
+                {couponError && <p className="text-[10px] font-bold text-rose-400 mt-1 select-none">⚠️ {couponError}</p>}
+                {couponSuccess && <p className="text-[10px] font-bold text-emerald-400 mt-1 select-none">✓ {couponSuccess}</p>}
+              </div>
+
+              {/* Invoice breakdown */}
+              <div className="bg-zinc-950/20 border border-zinc-850/80 rounded-xl p-3.5 space-y-2 text-[10px] text-zinc-400">
+                <div className="flex justify-between">
+                  <span>Custom Design Base Price:</span>
+                  <span className="font-mono text-zinc-200 font-bold">₹{currentFinalPrice.toLocaleString('en-IN')}</span>
+                </div>
+                {appliedDiscount > 0 && (
+                  <div className="flex justify-between text-emerald-400/90 font-medium">
+                    <span>Promo Discount ({appliedDiscount}%):</span>
+                    <span className="font-mono font-bold">-₹{discountAmount.toLocaleString('en-IN')}</span>
+                  </div>
+                )}
+                <div className="flex justify-between">
+                  <span>Delivery Fee:</span>
+                  <span className="font-mono text-zinc-200 font-bold">
+                    {customerZip.trim().length >= 2 ? `₹${deliveryFee}` : "Enter PIN Code"}
+                  </span>
+                </div>
+                <div className="flex justify-between border-t border-zinc-850 pt-2 text-xs font-extrabold text-white">
+                  <span>Total Amount Due:</span>
+                  <span className="font-mono text-indigo-400 text-xs font-bold">₹{finalTotalAmount.toLocaleString('en-IN')}</span>
+                </div>
+              </div>
+
+              {/* Action Buttons */}
+              <div className="pt-2 flex gap-3">
+                <button
+                  type="button"
+                  onClick={() => setShowCheckoutModal(false)}
+                  className="flex-1 bg-zinc-950 hover:bg-zinc-950/70 border border-zinc-850 hover:border-zinc-700 text-zinc-400 hover:text-zinc-200 text-xs font-semibold py-2.5 rounded-xl cursor-pointer transition-all"
+                >
+                  Cancel
+                </button>
+                <button 
+                  type="submit" 
+                  disabled={isSubmittingCheckout} 
+                  className="flex-1 bg-gradient-to-r from-indigo-500 to-purple-600 hover:from-indigo-600 hover:to-purple-700 text-white font-bold text-xs py-2.5 rounded-xl shadow-lg flex items-center justify-center gap-1.5 cursor-pointer disabled:opacity-50"
+                >
+                  {isSubmittingCheckout ? (
+                    <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                  ) : (
+                    <>
+                      <Lock className="w-3 h-3" />
+                      <span>Confirm & Pay (₹{finalTotalAmount.toLocaleString('en-IN')})</span>
+                    </>
+                  )}
+                </button>
+              </div>
+
+            </form>
+          </div>
+        </div>
+      )}
+
+      {/* Guest Limit Exceeded Modal Overlay */}
+      {isGuestLimitExceeded && (
+        <div className="fixed inset-0 bg-zinc-950/90 backdrop-blur-xl flex items-center justify-center z-[9999] p-6 text-center select-none animate-in fade-in duration-300">
+          <div className="w-full max-w-md bg-zinc-900 border border-zinc-800 p-8 rounded-3xl shadow-2xl relative overflow-hidden">
+            <div className="absolute top-0 right-0 w-32 h-32 bg-indigo-500/10 rounded-full filter blur-2xl pointer-events-none" />
+            
+            <div className="w-16 h-16 bg-amber-500/10 border border-amber-500/20 text-amber-400 rounded-full flex items-center justify-center mx-auto mb-6">
+              <Sparkles className="w-8 h-8 animate-pulse" />
+            </div>
+
+            <h3 className="text-xl font-black text-white uppercase tracking-wider mb-3">
+              Design Limit Reached!
+            </h3>
+            
+            <p className="text-xs text-zinc-400 leading-relaxed mb-6 font-medium">
+              You've successfully customized and checked out your first custom design as a guest! To continue creating and ordering more custom apparel, please sign up or log in to a free account.
+            </p>
+
+            <div className="space-y-3">
+              <button 
+                type="button"
+                onClick={() => {
+                  window.location.href = "/auth";
+                }} 
+                className="w-full bg-gradient-to-r from-indigo-500 to-purple-600 hover:from-indigo-600 hover:to-purple-700 text-white font-extrabold text-xs py-3.5 px-4 rounded-xl shadow-lg transition-all flex items-center justify-center gap-2 cursor-pointer"
+              >
+                <span>Sign Up / Log In</span>
+                <ChevronRight className="w-4 h-4" />
+              </button>
+              
+              <button 
+                type="button"
+                onClick={() => {
+                  window.location.href = "/dashboard";
+                }} 
+                className="w-full bg-zinc-950 hover:bg-zinc-950/70 border border-zinc-850 hover:border-zinc-700 text-zinc-400 hover:text-zinc-200 text-xs font-semibold py-3 px-4 rounded-xl transition-all cursor-pointer"
+              >
+                Return to Shop Catalog
+              </button>
+            </div>
+
           </div>
         </div>
       )}

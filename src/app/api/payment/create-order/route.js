@@ -102,16 +102,15 @@ export async function POST(request) {
               .limit(1);
             if (past && past.length > 0) firstTimeValid = false;
           } else if (shippingDetails.email) {
-            const { data: allOrders } = await supabase
+            const cleanEmail = shippingDetails.email.trim().toLowerCase();
+            const { data: existingGuestOrders } = await supabase
               .from("orders")
-              .select("shipping_details")
-              .neq("status", "cancelled");
-            if (allOrders) {
-              const matchingOrder = allOrders.find(o => {
-                const shipEmail = o.shipping_details?.email || "";
-                return shipEmail.trim().toLowerCase() === shippingDetails.email.trim().toLowerCase();
-              });
-              if (matchingOrder) firstTimeValid = false;
+              .select("id")
+              .eq("shipping_details->>email", cleanEmail)
+              .neq("status", "cancelled")
+              .limit(1);
+            if (existingGuestOrders && existingGuestOrders.length > 0) {
+              firstTimeValid = false;
             }
           }
         }
@@ -147,45 +146,77 @@ export async function POST(request) {
       return Response.json({ error: "Order total must be greater than zero." }, { status: 400 });
     }
 
-    // 6. Initialize Razorpay and create order
+     // A. Pre-create pending order in Supabase
+    const pendingOrderPayload = {
+      user_id: body.userId || null,
+      items: items,
+      total_amount: finalTotalAmount,
+      status: "pending",
+      shipping_details: {
+        ...shippingDetails,
+        coupon_code: code || null,
+        payment_details: {
+          razorpay_order_id: null,
+          razorpay_payment_id: null,
+          razorpay_signature: null
+        }
+      },
+      payment_gateway: "razorpay"
+    };
+
+    const { data: dbOrder, error: dbErr } = await supabase
+      .from("orders")
+      .insert([pendingOrderPayload])
+      .select("id")
+      .single();
+
+    if (dbErr || !dbOrder) {
+      console.error("Failed to pre-create pending order in database:", dbErr);
+      return Response.json({ error: "Failed to initiate order in the database. Please try again." }, { status: 500 });
+    }
+
+    // B. Initialize Razorpay and create order
     const razorpay = new Razorpay({
       key_id: settings.key_id.trim(),
       key_secret: settings.key_secret.trim(),
     });
 
-    const compactItems = items.map(i => [
-      i.productId || "",
-      i.quantity || 1,
-      i.size || "M",
-      (i.name || "Custom Apparel").substring(0, 30),
-      i.price || 3999
-    ]);
-    const compactShipping = [
-      (shippingDetails.name || "").substring(0, 40),
-      (shippingDetails.phone || "").substring(0, 20),
-      (shippingDetails.address || "").substring(0, 80),
-      (shippingDetails.city || "").substring(0, 30),
-      (shippingDetails.zip || "").substring(0, 10)
-    ];
-
     const options = {
       amount: Math.round(finalTotalAmount * 100), // amount in paisa
       currency: "INR",
-      receipt: `rcpt_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`,
+      receipt: `rcpt_${dbOrder.id}`,
       notes: {
-        user_id: body.userId || "",
-        items: JSON.stringify(compactItems).substring(0, 255),
-        shipping_details: JSON.stringify(compactShipping).substring(0, 255),
-        coupon_code: (couponCode || "").trim().toUpperCase()
+        db_order_id: String(dbOrder.id) // extremely short, safe from truncation
       }
     };
 
     const rzpOrder = await razorpay.orders.create(options);
 
+    // C. Update the pending order with the actual Razorpay Order ID
+    const { error: updateErr } = await supabase
+      .from("orders")
+      .update({
+        shipping_details: {
+          ...shippingDetails,
+          coupon_code: code || null,
+          payment_details: {
+            razorpay_order_id: rzpOrder.id,
+            razorpay_payment_id: null,
+            razorpay_signature: null
+          }
+        }
+      })
+      .eq("id", dbOrder.id);
+
+    if (updateErr) {
+      console.warn(`Failed to update pending order #${dbOrder.id} with Razorpay Order ID:`, updateErr.message);
+    }
+
     return Response.json({
       success: true,
       key_id: settings.key_id.trim(),
       order_id: rzpOrder.id,
+      db_order_id: dbOrder.id,
       amount: rzpOrder.amount,
       currency: rzpOrder.currency,
       calculated_total: finalTotalAmount

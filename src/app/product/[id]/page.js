@@ -28,7 +28,9 @@ import {
   Truck,
   RefreshCw,
   Tag,
-  Heart
+  Heart,
+  Edit,
+  Trash2
 } from "lucide-react";
 import Link from "next/link";
 import * as THREE from "three";
@@ -62,6 +64,12 @@ const isTemplateProduct = (p) => {
   return false;
 };
 
+const BASE_FAQS = [
+  { id: "base_1", question: "Can I customize the color overlay or upload logos on this product?", answer: "No, this is a ready-to-wear pre-designed catalog item. For custom decals and 3D color mapping, head to our 3D Design Studio tab." },
+  { id: "base_2", question: "What specific fabric structure does this use?", answer: "High-density ringspun organic cotton (380 GSM). Premium double-knitted draping structure that fits flat with minimal wrinkles." },
+  { id: "base_3", question: "How long does fabrication take?", answer: "Pre-designed inventory is processed at our Bangalore/Delhi hubs and shipped instantly. Use the zip code estimator for exact dates." }
+];
+
 export default function ProductDetailPage({ params }) {
   const router = useRouter();
   
@@ -86,12 +94,46 @@ export default function ProductDetailPage({ params }) {
   const [quantity, setQuantity] = useState(1);
   const [customName, setCustomName] = useState("");
   const [customNumber, setCustomNumber] = useState("");
+  const [personalizationError, setPersonalizationError] = useState("");
   const [activeToast, setActiveToast] = useState(null);
   const [isAdding, setIsAdding] = useState(false);
   const [isWishlisted, setIsWishlisted] = useState(false);
   const [enableCustomName, setEnableCustomName] = useState(false);
   const [enableCustomNumber, setEnableCustomNumber] = useState(false);
   const [stockStatus, setStockStatus] = useState("in_stock");
+
+  // Direct "Buy Now" Checkout Modal States
+  const [showCheckoutModal, setShowCheckoutModal] = useState(false);
+  const [checkoutName, setCheckoutName] = useState("");
+  const [checkoutPhone, setCheckoutPhone] = useState("");
+  const [checkoutAddress, setCheckoutAddress] = useState("");
+  const [checkoutCity, setCheckoutCity] = useState("");
+  const [checkoutZip, setCheckoutZip] = useState("");
+  const [checkoutSaveAddress, setCheckoutSaveAddress] = useState(true);
+  const [checkoutCouponCode, setCheckoutCouponCode] = useState("");
+  const [checkoutCouponError, setCheckoutCouponError] = useState(null);
+  const [checkoutCouponSuccess, setCheckoutCouponSuccess] = useState(null);
+  const [checkoutAppliedDiscount, setCheckoutAppliedDiscount] = useState(0);
+  const [checkoutFormErrors, setCheckoutFormErrors] = useState({});
+  const [checkoutSubmitting, setCheckoutSubmitting] = useState(false);
+
+  useEffect(() => {
+    if (showCheckoutModal) {
+      try {
+        const saved = localStorage.getItem("apparel_saved_address");
+        if (saved) {
+          const address = JSON.parse(saved);
+          setCheckoutName(address.name || "");
+          setCheckoutPhone(address.phone || "");
+          setCheckoutAddress(address.address || "");
+          setCheckoutCity(address.city || "");
+          setCheckoutZip(address.zip || "");
+        }
+      } catch (err) {
+        console.error("Error loading saved address for checkout:", err);
+      }
+    }
+  }, [showCheckoutModal]);
 
   const [hasPurchased, setHasPurchased] = useState(false);
   const [simulationMode, setSimulationMode] = useState(false);
@@ -108,6 +150,38 @@ export default function ProductDetailPage({ params }) {
   const [faqInputQuestion, setFaqInputQuestion] = useState("");
   const [faqStatus, setFaqStatus] = useState("");
   const [localFaqs, setLocalFaqs] = useState([]);
+  const [isAdmin, setIsAdmin] = useState(false);
+  const [deletedFaqIds, setDeletedFaqIds] = useState([]);
+  const [answeringFaqId, setAnsweringFaqId] = useState(null);
+  const [faqAnswerInput, setFaqAnswerInput] = useState("");
+
+  useEffect(() => {
+    const checkAdminStatus = async () => {
+      try {
+        const { data: { session } } = await supabase.auth.getSession();
+        if (session?.user?.email) {
+          const adminEmailSetting = process.env.NEXT_PUBLIC_ADMIN_EMAIL || "";
+          const adminEmails = adminEmailSetting 
+            ? adminEmailSetting.split(",").map(e => e.trim().toLowerCase())
+            : ["admin@example.com", "admin@thread3d.com"];
+          const userEmail = session.user.email.toLowerCase();
+          setIsAdmin(adminEmails.includes(userEmail));
+        } else {
+          setIsAdmin(false);
+        }
+      } catch (e) {
+        setIsAdmin(false);
+      }
+    };
+    checkAdminStatus();
+
+    try {
+      const stored = localStorage.getItem("apparel_faqs_deleted");
+      if (stored) setDeletedFaqIds(JSON.parse(stored));
+    } catch (e) {
+      console.warn(e);
+    }
+  }, []);
 
   // Technical Specifications — loaded from localStorage (set by admin per product)
   const DEFAULT_SPECS = [
@@ -194,7 +268,12 @@ export default function ProductDetailPage({ params }) {
     } catch {}
   }, [productId]);
 
-  const toggleWishlist = () => {
+  const toggleWishlist = async () => {
+    const { data: { session } } = await supabase.auth.getSession();
+    if (!session) {
+      router.push("/auth");
+      return;
+    }
     try {
       const wl = JSON.parse(localStorage.getItem("apparel_wishlist") || "[]");
       let updated;
@@ -213,7 +292,7 @@ export default function ProductDetailPage({ params }) {
         title: isWishlisted ? "💔 Removed from Wishlist" : "❤️ Added to Wishlist",
         message: isWishlisted ? "Item removed from your saved list." : `${product?.name} saved to your wishlist!`
       });
-    } catch {}
+    } catch (e) {}
   };
 
   // Load product
@@ -611,8 +690,34 @@ export default function ProductDetailPage({ params }) {
     setEstimationResult(estimate);
   };
 
-  const handleAddToCart = () => {
+  const handleAddToCart = async () => {
     if (!product) return;
+    const { data: { session } } = await supabase.auth.getSession();
+    if (!session) {
+      router.push("/auth");
+      return;
+    }
+    
+    // Validate required personalization details
+    if (allowPersonalization) {
+      if (allowNamePersonalization && !customName.trim()) {
+        setPersonalizationError("Custom Name is required for this jersey.");
+        setActiveToast({
+          title: "⚠️ Customization Required",
+          message: "Please enter a Custom Name before adding to bag."
+        });
+        return;
+      }
+      if (allowNumberPersonalization && !customNumber.trim()) {
+        setPersonalizationError("Custom Number is required for this jersey.");
+        setActiveToast({
+          title: "⚠️ Customization Required",
+          message: "Please enter a Custom Number before adding to bag."
+        });
+        return;
+      }
+    }
+    setPersonalizationError("");
     setIsAdding(true);
     const itemId = `cart_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
     const finalCustomName = enableCustomName ? (customName.trim() || null) : null;
@@ -646,6 +751,245 @@ export default function ProductDetailPage({ params }) {
       setActiveToast({ title: "🛒 Added to Shopping Bag", message: toastMsg });
     } catch (e) { console.error("Cart addition failed:", e); }
     finally { setIsAdding(false); }
+  };
+
+  const getShippingDetailsCheckout = (zip) => {
+    const cleanZip = (zip || "").trim().replace(/\D/g, "");
+    if (!cleanZip) {
+      return { distance: 0, fee: 0, mode: "Enter Postal Code" };
+    }
+    let distance = 950;
+    let fee = 199;
+    let mode = "National Air Express";
+    if (cleanZip.length >= 2) {
+      const prefix = cleanZip.substring(0, 2);
+      const prefixNum = parseInt(prefix, 10);
+      if (prefixNum >= 60 && prefixNum <= 64) {
+        if (prefixNum === 60) {
+          distance = 45;
+          fee = 49;
+          mode = "Local Courier Service";
+        } else {
+          distance = 250;
+          fee = 99;
+          mode = "Intra-State Express";
+        }
+      } else if (prefixNum >= 56 && prefixNum <= 59) {
+        distance = 350;
+        fee = 99;
+        mode = "Regional Fast Courier";
+      } else if (prefixNum >= 50 && prefixNum <= 53) {
+        distance = 630;
+        fee = 149;
+        mode = "National Surface Line";
+      } else if (prefixNum >= 67 && prefixNum <= 69) {
+        distance = 680;
+        fee = 149;
+        mode = "National Surface Line";
+      } else if (prefixNum >= 40 && prefixNum <= 44) {
+        distance = 1180;
+        fee = 249;
+        mode = "Premium Zone Delivery";
+      } else if (prefixNum >= 70 && prefixNum <= 74) {
+        distance = 1660;
+        fee = 299;
+        mode = "Premium Zone Delivery";
+      } else if ((prefixNum >= 11 && prefixNum <= 28) || prefixNum === 30 || prefixNum === 31 || prefixNum === 32 || prefixNum === 33 || prefixNum === 34) {
+        distance = 2200;
+        fee = 299;
+        mode = "Premium Zone Delivery";
+      } else {
+        distance = 950;
+        fee = 199;
+        mode = "National Air Express";
+      }
+    }
+    return { distance, fee, mode };
+  };
+
+  const handleApplyCouponCheckout = async (e) => {
+    if (e) e.preventDefault();
+    setCheckoutCouponError(null);
+    setCheckoutCouponSuccess(null);
+    const code = checkoutCouponCode.trim().toUpperCase();
+    if (!code) return;
+
+    try {
+      const { data: { session: currentSession } } = await supabase.auth.getSession();
+      const userId = currentSession?.user?.id || null;
+      const email = currentSession?.user?.email || null;
+
+      const response = await fetch("/api/coupons/validate", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ code, userId, email })
+      });
+
+      const resData = await response.json();
+      if (!response.ok) {
+        setCheckoutCouponError(resData.error || "Invalid coupon code.");
+        setCheckoutAppliedDiscount(0);
+      } else if (resData.success && resData.coupon) {
+        const disc = resData.coupon.discount_percent;
+        setCheckoutAppliedDiscount(disc);
+        setCheckoutCouponSuccess(`${disc}% discount applied successfully!`);
+      }
+    } catch (err) {
+      setCheckoutCouponError("Failed to validate coupon code.");
+      setCheckoutAppliedDiscount(0);
+    }
+  };
+
+  const handleCheckoutSubmit = async (e) => {
+    e.preventDefault();
+    if (!product) return;
+
+    const errors = {};
+    const nameClean = checkoutName.trim();
+    const phoneClean = checkoutPhone.trim();
+    const addressClean = checkoutAddress.trim();
+    const cityClean = checkoutCity.trim();
+    const zipClean = checkoutZip.trim();
+
+    if (!nameClean) {
+      errors.name = "Recipient name is required.";
+    } else if (nameClean.length < 3) {
+      errors.name = "Name must be at least 3 characters.";
+    } else if (!/^[a-zA-Z\s]+$/.test(nameClean)) {
+      errors.name = "Name can only contain letters.";
+    }
+
+    if (!phoneClean) {
+      errors.phone = "Phone number is required.";
+    } else if (!/^\d{10}$/.test(phoneClean.replace(/\D/g, ""))) {
+      errors.phone = "Phone number must be exactly 10 digits.";
+    }
+
+    if (!addressClean) {
+      errors.address = "Street address is required.";
+    } else if (addressClean.length < 5) {
+      errors.address = "Please enter a complete address (minimum 5 characters).";
+    }
+
+    if (!cityClean) {
+      errors.city = "City is required.";
+    } else if (cityClean.length < 2) {
+      errors.city = "City must be at least 2 characters.";
+    }
+
+    if (!zipClean) {
+      errors.zip = "Postal/ZIP code is required.";
+    } else if (!/^\d{6}$/.test(zipClean.replace(/\D/g, ""))) {
+      errors.zip = "PIN code must be exactly 6 digits.";
+    }
+
+    setCheckoutFormErrors(errors);
+    if (Object.keys(errors).length > 0) {
+      return;
+    }
+
+    setCheckoutSubmitting(true);
+
+    const finalCustomName = enableCustomName ? (customName.trim() || null) : null;
+    const finalCustomNumber = enableCustomNumber ? (customNumber.trim() || null) : null;
+
+    const cartItem = {
+      id: `checkout_${Date.now()}`,
+      productId: product.id,
+      name: `${product.name} (Premium Organic Cotton)`,
+      baseTexture: product.texture_url,
+      glbUrl: product.glb_file_url,
+      thumbnailUrl: product.texture_url,
+      size: selectedSize,
+      quantity: quantity,
+      addedAt: new Date().toISOString(),
+      price: product.price || 3999,
+      fabric: "cotton",
+      customName: finalCustomName,
+      customNumber: finalCustomNumber
+    };
+
+    const subtotal = (product.price || 3999) * quantity;
+    const discountAmount = checkoutAppliedDiscount > 0 ? (subtotal * (checkoutAppliedDiscount / 100)) : 0;
+    const shippingInfo = getShippingDetailsCheckout(checkoutZip);
+    const deliveryFee = shippingInfo.fee;
+    const finalTotalAmount = Math.max(0, subtotal - discountAmount + deliveryFee);
+
+    const checkoutSession = {
+      cart: [cartItem],
+      shippingDetails: {
+        name: nameClean,
+        phone: phoneClean,
+        address: addressClean,
+        city: cityClean,
+        zip: zipClean
+      },
+      couponCode: checkoutCouponCode.trim().toUpperCase(),
+      subtotal,
+      discountAmount,
+      deliveryFee,
+      finalTotalAmount
+    };
+
+    try {
+      localStorage.setItem("apparel_checkout_session", JSON.stringify(checkoutSession));
+
+      if (checkoutSaveAddress) {
+        const savedAddress = {
+          name: nameClean,
+          phone: phoneClean,
+          address: addressClean,
+          city: cityClean,
+          zip: zipClean
+        };
+        localStorage.setItem("apparel_saved_address", JSON.stringify(savedAddress));
+      } else {
+        localStorage.removeItem("apparel_saved_address");
+      }
+      
+      setShowCheckoutModal(false);
+      setCheckoutSubmitting(false);
+      window.location.href = "/checkout/payment";
+    } catch (err) {
+      console.error("Error creating direct checkout session:", err);
+      setCheckoutSubmitting(false);
+    }
+  };
+
+  const handleBuyNowClick = async () => {
+    const { data: { session: currentSession } } = await supabase.auth.getSession();
+    if (!currentSession) {
+      router.push("/auth");
+      return;
+    }
+    
+    // Validate required personalization details
+    if (allowPersonalization) {
+      if (allowNamePersonalization && !customName.trim()) {
+        setPersonalizationError("Custom Name is required for this jersey.");
+        setActiveToast({
+          title: "⚠️ Customization Required",
+          message: "Please enter a Custom Name before purchasing."
+        });
+        return;
+      }
+      if (allowNumberPersonalization && !customNumber.trim()) {
+        setPersonalizationError("Custom Number is required for this jersey.");
+        setActiveToast({
+          title: "⚠️ Customization Required",
+          message: "Please enter a Custom Number before purchasing."
+        });
+        return;
+      }
+    }
+    setPersonalizationError("");
+    
+    setCheckoutCouponCode("");
+    setCheckoutCouponError(null);
+    setCheckoutCouponSuccess(null);
+    setCheckoutAppliedDiscount(0);
+    setCheckoutFormErrors({});
+    setShowCheckoutModal(true);
   };
 
   const handleSubmitReview = async (e) => {
@@ -704,6 +1048,72 @@ export default function ProductDetailPage({ params }) {
     setTimeout(() => setFaqStatus(""), 4000);
   };
 
+  const handleSaveFaqAnswer = (faqId, customAnswer) => {
+    if (!customAnswer.trim()) return;
+    try {
+      // 1. Update global faqs list
+      const storedGlobal = localStorage.getItem("apparel_faqs_global");
+      const globalList = storedGlobal ? JSON.parse(storedGlobal) : [];
+      let targetFaq = null;
+      const updatedGlobal = globalList.map(faq => {
+        if (faq.id === faqId) {
+          targetFaq = { ...faq, answer: customAnswer };
+          return targetFaq;
+        }
+        return faq;
+      });
+      localStorage.setItem("apparel_faqs_global", JSON.stringify(updatedGlobal));
+
+      // 2. Update product-specific faqs list
+      const updatedProdList = localFaqs.map(faq => {
+        if (faq.id === faqId || (faq.question === targetFaq?.question && faq.productId === productId)) {
+          return { ...faq, answer: customAnswer };
+        }
+        return faq;
+      });
+      
+      if (!updatedProdList.some(faq => faq.id === faqId)) {
+        const baseFaq = BASE_FAQS.find(f => f.id === faqId) || globalList.find(f => f.id === faqId);
+        if (baseFaq) {
+          updatedProdList.push({ ...baseFaq, id: faqId, answer: customAnswer, productId });
+        } else {
+          updatedProdList.push({ id: faqId, question: targetFaq?.question || "", answer: customAnswer, productId });
+        }
+      }
+
+      setLocalFaqs(updatedProdList);
+      localStorage.setItem(`apparel_faqs_${productId}`, JSON.stringify(updatedProdList));
+
+      setAnsweringFaqId(null);
+      setFaqAnswerInput("");
+    } catch (e) {
+      console.error("Failed to answer FAQ on product page:", e);
+    }
+  };
+
+  const handleDeleteFaq = (faqId, questionText) => {
+    if (!confirm("Are you sure you want to delete this Q&A entry?")) return;
+    try {
+      // 1. Delete from global faqs list
+      const storedGlobal = localStorage.getItem("apparel_faqs_global");
+      const globalList = storedGlobal ? JSON.parse(storedGlobal) : [];
+      const updatedGlobal = globalList.filter(faq => faq.id !== faqId && faq.question !== questionText);
+      localStorage.setItem("apparel_faqs_global", JSON.stringify(updatedGlobal));
+
+      // 2. Delete from product-specific localFaqs list
+      const updatedProdList = localFaqs.filter(faq => faq.id !== faqId && faq.question !== questionText);
+      setLocalFaqs(updatedProdList);
+      localStorage.setItem(`apparel_faqs_${productId}`, JSON.stringify(updatedProdList));
+      
+      // 3. Update deleted base FAQs list
+      const newDeletedList = [...deletedFaqIds, faqId];
+      localStorage.setItem("apparel_faqs_deleted", JSON.stringify(newDeletedList));
+      setDeletedFaqIds(newDeletedList);
+    } catch (e) {
+      console.error("Failed to delete FAQ on product page:", e);
+    }
+  };
+
   const totalReviewsCount = reviews.length;
   const averageStars = totalReviewsCount > 0 ? (reviews.reduce((acc, curr) => acc + curr.rating, 0) / totalReviewsCount).toFixed(1) : "0.0";
   const ratingCounts = [0, 0, 0, 0, 0];
@@ -714,16 +1124,16 @@ export default function ProductDetailPage({ params }) {
   };
   const filteredReviews = selectedRatingFilter ? reviews.filter(r => r.rating === selectedRatingFilter) : reviews;
 
-  const baseFaqs = [
-    { question: "Can I customize the color overlay or upload logos on this product?", answer: "No, this is a ready-to-wear pre-designed catalog item. For custom decals and 3D color mapping, head to our 3D Design Studio tab." },
-    { question: "What is your return and exchange policy?", answer: "Due to the custom-made, on-demand fabrication and print sublimation process of all our customized items, we do not accept returns, refunds, or exchanges once an order enters production." },
-    { question: "What specific fabric structure does this use?", answer: "High-density ringspun organic cotton (380 GSM). Premium double-knitted draping structure that fits flat with minimal wrinkles." },
-    { question: "How long does fabrication take?", answer: "Pre-designed inventory is processed at our Bangalore/Delhi hubs and shipped instantly. Use the zip code estimator for exact dates." }
-  ];
-  const allFaqs = [...localFaqs, ...baseFaqs].filter(faq => {
+  // We merge localFaqs and BASE_FAQS, filtering out any overrides and deleted items
+  const allFaqs = [
+    ...localFaqs,
+    ...BASE_FAQS.filter(bf => !localFaqs.some(lf => lf.id === bf.id || lf.question === bf.question))
+  ]
+  .filter(faq => !deletedFaqIds.includes(faq.id))
+  .filter(faq => {
     if (!faqSearch.trim()) return true;
     const s = faqSearch.toLowerCase();
-    return faq.question.toLowerCase().includes(s) || faq.answer.toLowerCase().includes(s);
+    return faq.question.toLowerCase().includes(s) || (faq.answer || "").toLowerCase().includes(s);
   });
 
   const [relatedProducts, setRelatedProducts] = useState([]);
@@ -794,28 +1204,27 @@ export default function ProductDetailPage({ params }) {
       {product && (
         <>
           {/* Sticky Add-to-Cart bar (mobile) */}
-          <div className="fixed bottom-0 left-0 right-0 z-40 lg:hidden bg-zinc-950/95 border-t border-zinc-900 backdrop-blur-md px-4 py-3 flex items-center gap-3">
-            <div className="flex-1">
+          <div className="fixed bottom-0 left-0 right-0 z-40 lg:hidden bg-zinc-950/95 border-t border-zinc-900 backdrop-blur-md px-4 py-3 flex items-center gap-3 select-none">
+            <div className="flex-1 text-left min-w-0">
               <p className="text-xs font-extrabold text-white truncate">{product.name}</p>
               <p className="text-indigo-400 font-black text-sm">₹{product.price ? product.price.toLocaleString('en-IN') : "3,999"}</p>
             </div>
-            <button
-              onClick={handleAddToCart}
-              disabled={isAdding || stockStatus === "out_of_stock"}
-              className={`px-5 py-2.5 text-white font-bold text-xs rounded-xl shadow-lg flex items-center gap-1.5 cursor-pointer disabled:opacity-50 transition-all shrink-0 ${stockStatus === "out_of_stock" ? "bg-zinc-800 border border-zinc-700 text-zinc-500 cursor-not-allowed" : "bg-gradient-to-r from-indigo-500 to-purple-600 hover:from-indigo-600 hover:to-purple-700"}`}
-            >
-              {stockStatus === "out_of_stock" ? (
-                <>
-                  <Lock className="w-3.5 h-3.5" />
-                  <span>Out of Stock</span>
-                </>
-              ) : (
-                <>
-                  <ShoppingBag className="w-3.5 h-3.5" />
-                  <span>Add to Bag</span>
-                </>
-              )}
-            </button>
+            <div className="flex gap-2">
+              <button
+                onClick={handleAddToCart}
+                disabled={isAdding || stockStatus === "out_of_stock"}
+                className={`px-3 py-2.5 text-zinc-300 hover:text-white font-bold text-xs rounded-xl border border-zinc-800 bg-zinc-900/40 cursor-pointer disabled:opacity-50 transition-all shrink-0 flex items-center gap-1 ${stockStatus === "out_of_stock" ? "bg-zinc-800 border border-zinc-700 text-zinc-500 cursor-not-allowed" : ""}`}
+              >
+                <span>Bag</span>
+              </button>
+              <button
+                onClick={handleBuyNowClick}
+                disabled={stockStatus === "out_of_stock"}
+                className={`px-4 py-2.5 text-white font-bold text-xs rounded-xl shadow-lg flex items-center gap-1 cursor-pointer disabled:opacity-50 transition-all shrink-0 ${stockStatus === "out_of_stock" ? "bg-zinc-850 border border-zinc-800 text-zinc-500 cursor-not-allowed" : "bg-gradient-to-r from-indigo-500 to-purple-600 hover:from-indigo-600 hover:to-purple-700"}`}
+              >
+                <span>Buy Now</span>
+              </button>
+            </div>
           </div>
         </>
       )}
@@ -1048,8 +1457,8 @@ export default function ProductDetailPage({ params }) {
                     <span className="text-3xl font-black text-indigo-400">
                       ₹{product.price ? product.price.toLocaleString('en-IN') : "3,999"}
                     </span>
-                    <span className="text-sm text-emerald-400 font-bold bg-emerald-500/10 border border-emerald-500/20 px-2 py-0.5 rounded-full">
-                      FREE Shipping
+                    <span className="text-xs text-indigo-400 font-bold bg-indigo-500/10 border border-indigo-500/20 px-2.5 py-1 rounded-full uppercase tracking-wider">
+                      Standard Delivery from ₹49
                     </span>
                   </div>
                   <p className="text-sm text-zinc-500 mt-1.5">Inclusive of all taxes</p>
@@ -1094,9 +1503,15 @@ export default function ProductDetailPage({ params }) {
                 {/* Jersey Personalization Form (For already existing/non-customized catalog items only) */}
                 {!product.id.toString().startsWith("custom_") && allowPersonalization && (
                   <div className="bg-zinc-900/30 border border-zinc-800 p-4 rounded-2xl space-y-3.5 select-none animate-fade-in">
-                    <div className="flex items-center gap-1.5 pb-2 border-b border-zinc-850">
-                      <span className="text-sm text-zinc-400 font-bold uppercase tracking-widest">👕 Jersey Custom Personalization (Optional)</span>
+                    <div className="flex items-center gap-1.5 pb-2 border-b border-zinc-850 justify-between">
+                      <span className="text-sm text-zinc-400 font-bold uppercase tracking-widest">👕 Jersey Custom Personalization (Required)</span>
+                      <span className="text-[10px] text-rose-400 font-extrabold uppercase bg-rose-950/20 border border-rose-900/30 px-2 py-0.5 rounded tracking-wider animate-pulse">Required</span>
                     </div>
+                    {personalizationError && (
+                      <p className="text-xs font-bold text-rose-400 animate-shake">
+                        ⚠️ {personalizationError}
+                      </p>
+                    )}
 
                     <div className="grid grid-cols-2 gap-3.5">
                       {allowNamePersonalization && (
@@ -1145,7 +1560,7 @@ export default function ProductDetailPage({ params }) {
                   <button
                     onClick={handleAddToCart}
                     disabled={isAdding || stockStatus === "out_of_stock"}
-                    className={`flex-1 py-3.5 text-white font-black text-sm rounded-2xl shadow-lg active:scale-[0.99] transition-all flex items-center justify-center gap-2 cursor-pointer disabled:opacity-50 ${stockStatus === "out_of_stock" ? "bg-zinc-800 border border-zinc-700 text-zinc-500 cursor-not-allowed" : "bg-gradient-to-r from-indigo-500 to-purple-600 hover:from-indigo-600 hover:to-purple-700 hover:shadow-indigo-500/25"}`}
+                    className={`flex-1 py-3.5 text-zinc-300 hover:text-white font-black text-sm rounded-2xl shadow-lg border border-zinc-800 hover:border-zinc-700 bg-zinc-900/40 active:scale-[0.99] transition-all flex items-center justify-center gap-2 cursor-pointer disabled:opacity-50 ${stockStatus === "out_of_stock" ? "bg-zinc-800 border border-zinc-700 text-zinc-500 cursor-not-allowed" : ""}`}
                   >
                     {stockStatus === "out_of_stock" ? (
                       <>
@@ -1155,9 +1570,17 @@ export default function ProductDetailPage({ params }) {
                     ) : (
                       <>
                         <ShoppingBag className="w-4 h-4" />
-                        <span>{isAdding ? "Adding..." : "Add to Shopping Bag"}</span>
+                        <span>{isAdding ? "Adding..." : "Add to Bag"}</span>
                       </>
                     )}
+                  </button>
+                  <button
+                    onClick={handleBuyNowClick}
+                    disabled={stockStatus === "out_of_stock"}
+                    className={`flex-1 py-3.5 text-white font-black text-sm rounded-2xl shadow-lg active:scale-[0.99] transition-all flex items-center justify-center gap-2 cursor-pointer disabled:opacity-50 ${stockStatus === "out_of_stock" ? "bg-zinc-850 border border-zinc-800 text-zinc-500 cursor-not-allowed" : "bg-gradient-to-r from-indigo-500 to-purple-600 hover:from-indigo-600 hover:to-purple-700 hover:shadow-indigo-500/25"}`}
+                  >
+                    <span>⚡</span>
+                    <span>Buy Now</span>
                   </button>
                   <button
                     onClick={toggleWishlist}
@@ -1167,6 +1590,25 @@ export default function ProductDetailPage({ params }) {
                     <Heart className={`w-5 h-5 ${isWishlisted ? "fill-rose-400" : ""}`} />
                   </button>
                 </div>
+
+                {/* Dynamic Return Policy disclaimer under Action Row */}
+                {product && (
+                  <p className="text-xs font-bold text-center select-none tracking-wide mt-2">
+                    {isTemplateProduct(product) ? (
+                      <span className="text-rose-400 inline-flex items-center gap-1.5 justify-center bg-rose-950/10 border border-rose-900/20 px-3 py-1.5 rounded-xl w-full">
+                        🔒 Custom Studio Design: Final Sale (No Returns)
+                      </span>
+                    ) : allowPersonalization ? (
+                      <span className="text-rose-400 inline-flex items-center gap-1.5 justify-center bg-rose-950/10 border border-rose-900/20 px-3 py-1.5 rounded-xl w-full">
+                        🔒 Custom Jersey: Final Sale (No Returns)
+                      </span>
+                    ) : (
+                      <span className="text-emerald-400 inline-flex items-center gap-1.5 justify-center bg-emerald-950/10 border border-emerald-900/20 px-3 py-1.5 rounded-xl w-full">
+                        🔄 Ready-to-wear: Eligible for 14-Day Returns & Exchanges
+                      </span>
+                    )}
+                  </p>
+                )}
 
                 {/* Delivery Estimator */}
                 <div className="bg-zinc-900/30 border border-zinc-800 p-4 rounded-2xl space-y-3">
@@ -1203,11 +1645,7 @@ export default function ProductDetailPage({ params }) {
                 <div className="grid grid-cols-3 gap-2 text-center select-none">
                   {[
                     { icon: <ShieldCheck className="w-4 h-4 mx-auto text-indigo-400 mb-1" />, label: "Secure Payment" },
-                    (allowNamePersonalization || allowNumberPersonalization || isTemplateProduct(product)) ? (
-                      { icon: <X className="w-4 h-4 mx-auto text-rose-500 mb-1" />, label: "No Returns" }
-                    ) : (
-                      { icon: <RefreshCw className="w-4 h-4 mx-auto text-emerald-400 mb-1" />, label: "7-Day Returns" }
-                    ),
+                    { icon: <Sparkles className="w-4 h-4 mx-auto text-indigo-400 mb-1" />, label: "Tailored Fit" },
                     { icon: <Star className="w-4 h-4 mx-auto text-amber-400 mb-1" />, label: "Quality Fabric" },
                   ].map((badge, i) => (
                     <div key={i} className="bg-zinc-900/20 border border-zinc-900/60 p-3 rounded-xl hover:border-zinc-800 transition-colors">
@@ -1216,29 +1654,6 @@ export default function ProductDetailPage({ params }) {
                     </div>
                   ))}
                 </div>
-
-                {/* Return Policy Notice Disclaimer */}
-                {(allowNamePersonalization || allowNumberPersonalization || isTemplateProduct(product)) ? (
-                  <div className="bg-rose-950/20 border border-rose-900/30 p-3.5 rounded-2xl flex items-start gap-2.5">
-                    <span className="text-rose-500 font-bold text-xs select-none">⚠️</span>
-                    <div className="flex-1">
-                      <h4 className="text-sm font-bold text-rose-400 uppercase tracking-wider">No Returns or Exchanges</h4>
-                      <p className="text-xs text-zinc-500 leading-normal mt-0.5 font-medium">
-                        Because each apparel garment is custom-printed, tailored, and fabricated specifically to your order, we do not accept returns or exchanges.
-                      </p>
-                    </div>
-                  </div>
-                ) : (
-                  <div className="bg-emerald-950/20 border border-emerald-900/30 p-3.5 rounded-2xl flex items-start gap-2.5">
-                    <span className="text-emerald-500 font-bold text-xs select-none">✓</span>
-                    <div className="flex-1">
-                      <h4 className="text-sm font-bold text-emerald-400 uppercase tracking-wider">7-Day Returns Accepted</h4>
-                      <p className="text-xs text-zinc-500 leading-normal mt-0.5 font-medium">
-                        Returns and exchanges are accepted within 7 days of delivery. The garment must be unworn, unwashed, and in its original premium packaging.
-                      </p>
-                    </div>
-                  </div>
-                )}
               </div>
             </div>
 
@@ -1257,6 +1672,36 @@ export default function ProductDetailPage({ params }) {
                   <p className="text-xs text-zinc-400 leading-relaxed font-medium">
                     Our dynamic print overlays are embedded using digital pigment sublimation, providing high contrast and saturation that resists washing fades and maintains print longevity.
                   </p>
+                  <div className="border-t border-zinc-900/60 pt-4 mt-4 space-y-1.5 animate-fade-in">
+                    {isTemplateProduct(product) ? (
+                      <>
+                        <h4 className="text-xs font-bold text-rose-400 uppercase tracking-widest flex items-center gap-1.5">
+                          🔒 Final Sale Policy
+                        </h4>
+                        <p className="text-xs text-zinc-400 leading-relaxed font-medium">
+                          Custom studio designs and templates tailored in the 3D Design Studio are made-to-order based on your specifications, and are strictly final sale. These items are not eligible for returns, refunds, or exchanges.
+                        </p>
+                      </>
+                    ) : allowPersonalization ? (
+                      <>
+                        <h4 className="text-xs font-bold text-rose-400 uppercase tracking-widest flex items-center gap-1.5">
+                          🔒 Custom Jersey: Final Sale
+                        </h4>
+                        <p className="text-xs text-zinc-400 leading-relaxed font-medium">
+                          Because this jersey is custom-printed with your choice of custom name and number, it is tailored to order and is strictly final sale. Personalized items are not eligible for returns, refunds, or exchanges.
+                        </p>
+                      </>
+                    ) : (
+                      <>
+                        <h4 className="text-xs font-bold text-zinc-300 uppercase tracking-widest flex items-center gap-1.5">
+                          🔄 14-Day Return Policy
+                        </h4>
+                        <p className="text-xs text-zinc-400 leading-relaxed font-medium">
+                          As a ready-to-wear catalog item, this product is eligible for returns or exchanges within 14 days of delivery. Standard garments must be unworn and in their original packaging. Note: Garments customized in the 3D Studio or personalized with custom text are final sale.
+                        </p>
+                      </>
+                    )}
+                  </div>
                 </div>
                 <div className="lg:col-span-5">
                   <h2 className="text-xs font-bold text-zinc-400 uppercase tracking-widest flex items-center gap-1.5 mb-4">
@@ -1343,15 +1788,66 @@ export default function ProductDetailPage({ params }) {
                 {allFaqs.length === 0 ? (
                   <div className="py-8 text-center text-zinc-600 text-xs font-semibold">No matching Q&As. Ask above!</div>
                 ) : allFaqs.map((faq, idx) => (
-                  <div key={faq.id || idx} className="bg-zinc-950/30 border border-zinc-900/60 p-4 rounded-2xl space-y-2">
-                    <div className="flex gap-2 items-start text-xs text-zinc-100 font-bold">
+                  <div key={faq.id || idx} className="bg-zinc-950/30 border border-zinc-900/60 p-4 rounded-2xl space-y-2 relative group">
+                    <div className="flex gap-2 items-start text-xs text-zinc-100 font-bold pr-16">
                       <span className="bg-indigo-600/15 text-indigo-400 border border-indigo-500/20 px-1.5 py-0.5 rounded font-mono text-xs uppercase shrink-0">Q</span>
                       <p>{faq.question}</p>
                     </div>
-                    <div className="flex gap-2 items-start text-sm text-zinc-400 leading-relaxed pl-8">
-                      <span className="bg-zinc-900 text-zinc-500 border border-zinc-800 px-1.5 py-0.5 rounded font-mono text-xs uppercase shrink-0">A</span>
-                      <p>{faq.answer}</p>
-                    </div>
+
+                    {answeringFaqId === faq.id ? (
+                      <div className="pl-8 space-y-2 mt-2">
+                        <textarea
+                          value={faqAnswerInput}
+                          onChange={(e) => setFaqAnswerInput(e.target.value)}
+                          placeholder="Type an answer to this question..."
+                          className="w-full bg-zinc-950 border border-zinc-800 focus:border-indigo-500 rounded-xl p-3 text-xs text-white placeholder-zinc-700 focus:outline-none font-semibold min-h-[60px]"
+                        />
+                        <div className="flex gap-2">
+                          <button
+                            onClick={() => handleSaveFaqAnswer(faq.id, faqAnswerInput)}
+                            className="px-3 py-1.5 bg-emerald-500/15 hover:bg-emerald-600 text-emerald-400 hover:text-white border border-emerald-500/20 text-[10px] font-bold rounded-lg transition-all cursor-pointer flex items-center gap-1"
+                          >
+                            <Check className="w-3 h-3" /> Save
+                          </button>
+                          <button
+                            onClick={() => {
+                              setAnsweringFaqId(null);
+                              setFaqAnswerInput("");
+                            }}
+                            className="px-3 py-1.5 bg-zinc-800 hover:bg-zinc-700 text-zinc-400 hover:text-white border border-zinc-700 text-[10px] font-bold rounded-lg transition-all cursor-pointer flex items-center gap-1"
+                          >
+                            <X className="w-3.5 h-3.5" /> Cancel
+                          </button>
+                        </div>
+                      </div>
+                    ) : (
+                      <div className="flex gap-2 items-start text-sm text-zinc-400 leading-relaxed pl-8">
+                        <span className="bg-zinc-900 text-zinc-500 border border-zinc-800 px-1.5 py-0.5 rounded font-mono text-xs uppercase shrink-0">A</span>
+                        <p>{faq.answer}</p>
+                      </div>
+                    )}
+
+                    {isAdmin && answeringFaqId !== faq.id && (
+                      <div className="absolute right-4 top-4 flex gap-1.5 opacity-0 group-hover:opacity-100 transition-opacity">
+                        <button
+                          onClick={() => {
+                            setAnsweringFaqId(faq.id);
+                            setFaqAnswerInput(faq.answer || "");
+                          }}
+                          title="Edit Answer"
+                          className="p-1.5 bg-indigo-500/10 hover:bg-indigo-600 text-indigo-400 hover:text-white border border-indigo-500/20 rounded-lg transition-all cursor-pointer"
+                        >
+                          <Edit className="w-3.5 h-3.5" />
+                        </button>
+                        <button
+                          onClick={() => handleDeleteFaq(faq.id, faq.question)}
+                          title="Delete Q&A"
+                          className="p-1.5 bg-red-500/10 hover:bg-red-600 text-red-400 hover:text-white border border-red-500/20 rounded-lg transition-all cursor-pointer"
+                        >
+                          <Trash2 className="w-3.5 h-3.5" />
+                        </button>
+                      </div>
+                    )}
                   </div>
                 ))}
               </div>
@@ -1536,6 +2032,322 @@ export default function ProductDetailPage({ params }) {
           </div>
         )}
       </main>
+
+      {/* Premium Direct checkout modal for Buy Now */}
+      {showCheckoutModal && product && (
+        <div className="fixed inset-0 z-50 bg-black/75 backdrop-blur-md flex items-center justify-center p-4 overflow-y-auto">
+          <div className="bg-zinc-900 border border-zinc-800 rounded-3xl w-full max-w-4xl shadow-2xl overflow-hidden flex flex-col md:flex-row max-h-[95vh] md:max-h-[90vh] animate-in fade-in zoom-in-95 duration-150">
+            
+            {/* Left Column: Product Summary & Invoice Breakdowns */}
+            <div className="flex-1 p-6 bg-zinc-950/45 border-b md:border-b-0 md:border-r border-zinc-800/80 flex flex-col justify-between overflow-y-auto">
+              <div>
+                <div className="flex justify-between items-start mb-6">
+                  <div>
+                    <span className="text-[10px] bg-indigo-500/20 text-indigo-300 border border-indigo-500/30 px-2 py-0.5 rounded-full uppercase tracking-wider font-bold">
+                      Direct Checkout
+                    </span>
+                    <h3 className="font-extrabold text-lg text-white mt-1.5">Selected Apparel</h3>
+                  </div>
+                  <button
+                    onClick={() => setShowCheckoutModal(false)}
+                    className="md:hidden p-1.5 hover:bg-zinc-900 rounded-lg text-zinc-500 hover:text-white transition-colors cursor-pointer"
+                  >
+                    <X className="w-5 h-5" />
+                  </button>
+                </div>
+
+                {/* Product row */}
+                <div className="flex gap-4 items-center bg-zinc-900/60 p-4 rounded-2xl border border-zinc-850 mb-6">
+                  <div className="w-16 h-20 bg-zinc-950 rounded-xl border border-zinc-800 overflow-hidden shrink-0">
+                    <img
+                      src={product.texture_url}
+                      alt={product.name}
+                      className="w-full h-full object-cover"
+                    />
+                  </div>
+                  <div>
+                    <h4 className="font-bold text-sm text-white leading-tight">{product.name}</h4>
+                    <p className="text-xs text-zinc-500 mt-1 uppercase tracking-wider font-semibold">{product.category || "Streetwear"}</p>
+                    <p className="text-xs font-black text-indigo-400 mt-1">₹{(product.price || 3999).toLocaleString('en-IN')}</p>
+                  </div>
+                </div>
+
+                {/* Selected options review */}
+                <div className="mb-6 space-y-2 text-xs font-semibold text-zinc-400">
+                  <div className="flex justify-between border-b border-zinc-850 pb-2">
+                    <span>Selected Size:</span>
+                    <span className="text-white uppercase font-bold">{selectedSize}</span>
+                  </div>
+                  <div className="flex justify-between border-b border-zinc-850 pb-2">
+                    <span>Order Quantity:</span>
+                    <span className="text-white font-bold">{quantity}</span>
+                  </div>
+                  {(enableCustomName && customName) && (
+                    <div className="flex justify-between border-b border-zinc-850 pb-2">
+                      <span>Custom Jersey Name:</span>
+                      <span className="text-indigo-400 font-mono font-bold">{customName}</span>
+                    </div>
+                  )}
+                  {(enableCustomNumber && customNumber) && (
+                    <div className="flex justify-between border-b border-zinc-850 pb-2">
+                      <span>Custom Jersey Number:</span>
+                      <span className="text-indigo-400 font-mono font-bold">{customNumber}</span>
+                    </div>
+                  )}
+                  <div className="mt-4 pt-3 border-t border-zinc-850 flex items-center justify-between font-semibold">
+                    <span className="text-zinc-500">Return Eligibility:</span>
+                    {isTemplateProduct(product) ? (
+                      <span className="text-[10px] font-extrabold px-2 py-0.5 rounded uppercase tracking-wider bg-rose-950/20 border border-rose-900/30 text-rose-400">
+                        🔒 Final Sale
+                      </span>
+                    ) : allowPersonalization ? (
+                      <span className="text-[10px] font-extrabold px-2 py-0.5 rounded uppercase tracking-wider bg-rose-950/20 border border-rose-900/30 text-rose-400">
+                        🔒 Final Sale
+                      </span>
+                    ) : (
+                      <span className="text-[10px] font-extrabold px-2 py-0.5 rounded uppercase tracking-wider bg-emerald-950/20 border border-emerald-900/30 text-emerald-450">
+                        🔄 14-Day Return
+                      </span>
+                    )}
+                  </div>
+                </div>
+              </div>
+
+              {/* Invoice calculation breakdown */}
+              {(() => {
+                const subtotal = (product.price || 3999) * quantity;
+                const discountAmount = checkoutAppliedDiscount > 0 ? (subtotal * (checkoutAppliedDiscount / 100)) : 0;
+                const shippingInfo = getShippingDetailsCheckout(checkoutZip);
+                const deliveryFee = shippingInfo.fee;
+                const finalTotalAmount = Math.max(0, subtotal - discountAmount + deliveryFee);
+
+                return (
+                  <div className="border-t border-zinc-850 pt-5 mt-6 space-y-3 font-mono text-xs">
+                    <div className="flex justify-between text-zinc-550">
+                      <span>Subtotal:</span>
+                      <span className="text-zinc-300 font-bold">₹{subtotal.toLocaleString('en-IN')}</span>
+                    </div>
+                    {checkoutAppliedDiscount > 0 && (
+                      <div className="flex justify-between text-emerald-500 font-bold">
+                        <span>Discount ({checkoutAppliedDiscount}%):</span>
+                        <span>-₹{discountAmount.toLocaleString('en-IN')}</span>
+                      </div>
+                    )}
+                    <div className="flex justify-between text-zinc-550">
+                      <span>Delivery Fee:</span>
+                      <span className="text-zinc-300 font-bold">{deliveryFee > 0 ? `₹${deliveryFee}` : "Free"}</span>
+                    </div>
+                    <div className="flex justify-between text-sm font-extrabold border-t border-dashed border-zinc-800 pt-3 text-white">
+                      <span className="font-sans uppercase tracking-wider">Total Amount:</span>
+                      <span className="text-indigo-400 font-mono">₹{finalTotalAmount.toLocaleString('en-IN')}</span>
+                    </div>
+                  </div>
+                );
+              })()}
+            </div>
+
+            {/* Right Column: Address Details Form & Action */}
+            <form onSubmit={handleCheckoutSubmit} className="flex-1 p-6 flex flex-col justify-between overflow-y-auto">
+              <div className="space-y-4">
+                <div className="hidden md:flex justify-between items-center mb-2">
+                  <h3 className="font-extrabold text-sm text-white uppercase tracking-wider">Shipping Details</h3>
+                  <button
+                    type="button"
+                    onClick={() => setShowCheckoutModal(false)}
+                    className="p-1 hover:bg-zinc-800 rounded-lg text-zinc-500 hover:text-white transition-colors cursor-pointer"
+                  >
+                    <X className="w-4.5 h-4.5" />
+                  </button>
+                </div>
+
+                {/* Recipient details */}
+                <div>
+                  <label className="block text-[10px] font-extrabold text-zinc-500 uppercase tracking-wider mb-1.5">Recipient Name</label>
+                  <input
+                    type="text"
+                    required
+                    value={checkoutName}
+                    onChange={(e) => {
+                      setCheckoutName(e.target.value);
+                      if (checkoutFormErrors.name) setCheckoutFormErrors(prev => ({ ...prev, name: null }));
+                    }}
+                    placeholder="Recipient's full name"
+                    className={`w-full bg-zinc-950 border rounded-xl px-3.5 py-2 text-xs text-white placeholder-zinc-700 focus:outline-none ${
+                      checkoutFormErrors.name ? "border-red-500/80 focus:border-red-500" : "border-zinc-800 focus:border-indigo-500"
+                    }`}
+                  />
+                  {checkoutFormErrors.name && (
+                    <p className="text-[10px] text-red-400 mt-1 font-medium select-none">{checkoutFormErrors.name}</p>
+                  )}
+                </div>
+
+                {/* Phone */}
+                <div>
+                  <label className="block text-[10px] font-extrabold text-zinc-500 uppercase tracking-wider mb-1.5">Contact Phone</label>
+                  <input
+                    type="tel"
+                    required
+                    value={checkoutPhone}
+                    onChange={(e) => {
+                      setCheckoutPhone(e.target.value);
+                      if (checkoutFormErrors.phone) setCheckoutFormErrors(prev => ({ ...prev, phone: null }));
+                    }}
+                    placeholder="10-digit phone number"
+                    className={`w-full bg-zinc-950 border rounded-xl px-3.5 py-2 text-xs text-white placeholder-zinc-700 focus:outline-none ${
+                      checkoutFormErrors.phone ? "border-red-500/80 focus:border-red-500" : "border-zinc-800 focus:border-indigo-500"
+                    }`}
+                  />
+                  {checkoutFormErrors.phone && (
+                    <p className="text-[10px] text-red-400 mt-1 font-medium select-none">{checkoutFormErrors.phone}</p>
+                  )}
+                </div>
+
+                {/* Address */}
+                <div>
+                  <label className="block text-[10px] font-extrabold text-zinc-500 uppercase tracking-wider mb-1.5">Street Address</label>
+                  <input
+                    type="text"
+                    required
+                    value={checkoutAddress}
+                    onChange={(e) => {
+                      setCheckoutAddress(e.target.value);
+                      if (checkoutFormErrors.address) setCheckoutFormErrors(prev => ({ ...prev, address: null }));
+                    }}
+                    placeholder="Apartment, suite, unit, building, street"
+                    className={`w-full bg-zinc-950 border rounded-xl px-3.5 py-2 text-xs text-white placeholder-zinc-700 focus:outline-none ${
+                      checkoutFormErrors.address ? "border-red-500/80 focus:border-red-500" : "border-zinc-800 focus:border-indigo-500"
+                    }`}
+                  />
+                  {checkoutFormErrors.address && (
+                    <p className="text-[10px] text-red-400 mt-1 font-medium select-none">{checkoutFormErrors.address}</p>
+                  )}
+                </div>
+
+                {/* City & ZIP */}
+                <div className="grid grid-cols-2 gap-4">
+                  <div>
+                    <label className="block text-[10px] font-extrabold text-zinc-500 uppercase tracking-wider mb-1.5">City / Region</label>
+                    <input
+                      type="text"
+                      required
+                      value={checkoutCity}
+                      onChange={(e) => {
+                        setCheckoutCity(e.target.value);
+                        if (checkoutFormErrors.city) setCheckoutFormErrors(prev => ({ ...prev, city: null }));
+                      }}
+                      placeholder="e.g. Chennai"
+                      className={`w-full bg-zinc-950 border rounded-xl px-3.5 py-2 text-xs text-white placeholder-zinc-700 focus:outline-none ${
+                        checkoutFormErrors.city ? "border-red-500/80 focus:border-red-500" : "border-zinc-800 focus:border-indigo-500"
+                      }`}
+                    />
+                    {checkoutFormErrors.city && (
+                      <p className="text-[10px] text-red-400 mt-1 font-medium select-none">{checkoutFormErrors.city}</p>
+                    )}
+                  </div>
+                  <div>
+                    <label className="block text-[10px] font-extrabold text-zinc-500 uppercase tracking-wider mb-1.5">Postal / PIN</label>
+                    <input
+                      type="text"
+                      required
+                      value={checkoutZip}
+                      onChange={(e) => {
+                        setCheckoutZip(e.target.value);
+                        if (checkoutFormErrors.zip) setCheckoutFormErrors(prev => ({ ...prev, zip: null }));
+                      }}
+                      placeholder="6-digit PIN code"
+                      className={`w-full bg-zinc-950 border rounded-xl px-3.5 py-2 text-xs text-white placeholder-zinc-700 focus:outline-none ${
+                        checkoutFormErrors.zip ? "border-red-500/80 focus:border-red-500" : "border-zinc-800 focus:border-indigo-500"
+                      }`}
+                    />
+                    {checkoutFormErrors.zip && (
+                      <p className="text-[10px] text-red-400 mt-1 font-medium select-none">{checkoutFormErrors.zip}</p>
+                    )}
+                  </div>
+                </div>
+
+                {/* ZIP shipping zone tooltip */}
+                {checkoutZip.length >= 2 && (
+                  <div className="bg-indigo-950/20 border border-indigo-900/10 rounded-xl p-3 flex justify-between items-center text-xs text-zinc-400">
+                    <div>
+                      <span className="font-semibold text-zinc-300 block">{getShippingDetailsCheckout(checkoutZip).mode}</span>
+                      <span className="text-[10px] text-zinc-550">Logistics Distance: ~{getShippingDetailsCheckout(checkoutZip).distance}km</span>
+                    </div>
+                    <span className="text-indigo-400 font-bold font-mono">₹{getShippingDetailsCheckout(checkoutZip).fee} Delivery</span>
+                  </div>
+                )}
+
+                {/* Coupon promotion application box */}
+                <div className="border-t border-zinc-850 pt-4 mt-2">
+                  <label className="block text-[10px] font-extrabold text-zinc-500 uppercase tracking-wider mb-1.5">Promo Coupon Discount</label>
+                  <div className="flex gap-2">
+                    <input
+                      type="text"
+                      placeholder="e.g. THREAD3D"
+                      value={checkoutCouponCode}
+                      onChange={(e) => setCheckoutCouponCode(e.target.value)}
+                      className="bg-zinc-950 border border-zinc-800 rounded-xl px-3 py-1.5 text-xs text-white uppercase placeholder-zinc-700 focus:outline-none focus:border-indigo-500 flex-1"
+                    />
+                    <button
+                      type="button"
+                      onClick={handleApplyCouponCheckout}
+                      className="bg-zinc-850 hover:bg-zinc-700 border border-zinc-750 text-zinc-300 hover:text-white px-4 py-1.5 rounded-xl text-xs font-bold transition-all cursor-pointer"
+                    >
+                      Apply
+                    </button>
+                  </div>
+                  {checkoutCouponError && (
+                    <p className="text-[10px] text-red-400 mt-1.5 font-medium">{checkoutCouponError}</p>
+                  )}
+                  {checkoutCouponSuccess && (
+                    <p className="text-[10px] text-emerald-400 mt-1.5 font-bold">{checkoutCouponSuccess}</p>
+                  )}
+                </div>
+
+                {/* Address reuse check */}
+                <label className="flex items-center gap-2 text-xs text-zinc-400 select-none pt-2 cursor-pointer">
+                  <input
+                    type="checkbox"
+                    checked={checkoutSaveAddress}
+                    onChange={(e) => setCheckoutSaveAddress(e.target.checked)}
+                    className="accent-indigo-600 rounded bg-zinc-950 border-zinc-800 cursor-pointer"
+                  />
+                  <span>Save shipping coordinates for future orders</span>
+                </label>
+              </div>
+
+              {/* Secure checkout submission */}
+              <div className="pt-6 border-t border-zinc-850 mt-4 flex gap-3">
+                <button
+                  type="button"
+                  onClick={() => setShowCheckoutModal(false)}
+                  className="px-5 py-3 border border-zinc-800 hover:border-zinc-700 bg-zinc-950 text-zinc-400 hover:text-white rounded-xl text-xs font-bold transition-colors cursor-pointer select-none"
+                >
+                  Cancel
+                </button>
+                <button
+                  type="submit"
+                  disabled={checkoutSubmitting}
+                  className="flex-1 bg-gradient-to-r from-indigo-500 to-purple-600 hover:from-indigo-600 hover:to-purple-700 disabled:opacity-40 text-white rounded-xl py-3 font-bold text-xs transition-all flex items-center justify-center gap-2 shadow-lg shadow-indigo-600/25 cursor-pointer font-black tracking-wider"
+                >
+                  {checkoutSubmitting ? (
+                    <>
+                      <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                      <span>Opening Gateway...</span>
+                    </>
+                  ) : (
+                    <>
+                      <Lock className="w-3.5 h-3.5" />
+                      <span>Proceed to Payment</span>
+                    </>
+                  )}
+                </button>
+              </div>
+            </form>
+
+          </div>
+        </div>
+      )}
+
     </div>
   );
 }

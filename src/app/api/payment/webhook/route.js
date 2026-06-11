@@ -48,30 +48,71 @@ export async function POST(request) {
 
       // Search for order by Razorpay Order ID in shipping_details or receipt
       // We check if an order has been created.
-      // First, fetch orders and check if any order is associated with this Razorpay order ID.
-      // Postgrest supports jsonb querying: e.g. shipping_details->payment_details->>razorpay_order_id
-      const { data: orders, error: searchError } = await supabase
-        .from("orders")
-        .select("*");
+      // First, fetch the matching order using highly-optimized jsonb database index query.
+      let matchingOrder = null;
+      let searchError = null;
+
+      try {
+        const { data, error } = await supabase
+          .from("orders")
+          .select("*")
+          .eq("shipping_details->payment_details->>razorpay_order_id", razorpayOrderId)
+          .limit(1)
+          .maybeSingle();
+
+        if (error) {
+          searchError = error;
+        } else if (data) {
+          matchingOrder = data;
+        }
+      } catch (err) {
+        console.warn("Exception during Razorpay Order ID search in webhook:", err);
+      }
+
+      // Fallback: If not found by Razorpay Order ID, check notes for db_order_id (new pending order pre-creation)
+      if (!matchingOrder && !searchError) {
+        const notes = paymentEntity.notes || {};
+        const dbOrderId = notes.db_order_id;
+        if (dbOrderId) {
+          try {
+            const { data } = await supabase
+              .from("orders")
+              .select("*")
+              .eq("id", dbOrderId)
+              .limit(1)
+              .maybeSingle();
+            if (data) {
+              matchingOrder = data;
+            }
+          } catch (err) {
+            console.warn("Exception during DB Order ID search in webhook:", err);
+          }
+        }
+      }
 
       if (searchError) {
         console.error("Failed to query orders in webhook:", searchError);
         return Response.json({ error: "Database search error" }, { status: 500 });
       }
 
-      // Find the order that matches this razorpayOrderId
-      const matchingOrder = orders.find(o => {
-        const payDetails = o.shipping_details?.payment_details;
-        return payDetails?.razorpay_order_id === razorpayOrderId;
-      });
-
       if (matchingOrder) {
-        // If order already exists, ensure status is processing
+        // If order already exists, ensure status is processing and payment details are attached
         if (matchingOrder.status === "pending" || matchingOrder.status === "awaiting_payment") {
+          const updatedShippingDetails = {
+            ...matchingOrder.shipping_details,
+            payment_details: {
+              ...(matchingOrder.shipping_details?.payment_details || {}),
+              razorpay_order_id: razorpayOrderId,
+              razorpay_payment_id: razorpayPaymentId,
+              webhook_verified_at: new Date().toISOString()
+            }
+          };
+
           const { error: updateError } = await supabase
             .from("orders")
             .update({ 
               status: "processing",
+              shipping_details: updatedShippingDetails,
               updated_at: new Date().toISOString()
             })
             .eq("id", matchingOrder.id);
@@ -88,7 +129,7 @@ export async function POST(request) {
         }
       } else {
         // Order not found (e.g. signature verification API failed or browser closed before callback)
-        // We can create the order if the full details are in the notes, or log warning for manual sync.
+        // We can create the order if the full details are in the notes (legacy orders), or log warning for manual sync.
         const notes = paymentEntity.notes || {};
         
         // If the user's name, email, items etc are in notes, we could reconstruct it.
