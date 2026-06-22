@@ -1,0 +1,15 @@
+{
+  "name": "replace_file_content",
+  "args": {
+    "AllowMultiple": "false",
+    "Description": "\"Format shipping address safely if it is an object in the invoice layout.\"",
+    "EndLine": "6303",
+    "Instruction": "\"Render shipping_address safely when it is an object to fix the React child error in the invoice view\"",
+    "ReplacementContent": "\"                  <p className=\\\"text-zinc-700 leading-relaxed\\\">\\n                    {typeof (printingInvoiceOrder.shipping_address || printingInvoiceOrder.shipping_details) === \\\"object\\\" && (printingInvoiceOrder.shipping_address || printingInvoiceOrder.shipping_details) !== null\\n                      ? (() => {\\n                          const addrObj = printingInvoiceOrder.shipping_address || printingInvoiceOrder.shipping_details;\\n                          return `${addrObj.address || \\\"\\\"}${addrObj.city ? `, ${addrObj.city}` : \\\"\\\"} ${addrObj.zip || \\\"\\\"}`.trim() || \\\"Standard Customization Depot\\\";\\n                        })()\\n                      : (printingInvoiceOrder.shipping_address || printingInvoiceOrder.shipping_details || \\\"Standard Customization Depot\\\")}\\n                  </p>\"",
+    "StartLine": "6299",
+    "TargetContent": "\"                  <p className=\\\"text-zinc-700 leading-relaxed\\\">{printingInvoiceOrder.shipping_address || \\\"Standard Customization Depot\\\"}</p>\"",
+    "TargetFile": "\"E:\\\\APP 3D\\\\3d-apparel-studio\\\\src\\\\app\\\\admin\\\\page.js\"",
+    "toolAction": "\"Formatting invoice shipping address safely\"",
+    "toolSummary": "\"Replace file content\""
+  }
+}

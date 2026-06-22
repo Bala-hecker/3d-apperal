@@ -10,6 +10,7 @@ import {
   ShoppingBag, 
   Layers, 
   ChevronRight, 
+  Sliders,
   LogOut, 
   Loader2, 
   Trash2, 
@@ -37,6 +38,46 @@ const getSlug = (name) => {
     .replace(/(^-|-$)/g, "");
 };
 
+const parseDescriptionPersonalization = (descString) => {
+  const result = {
+    cleanDescription: descString || "",
+    allowName: false,
+    allowNumber: false,
+    stockStatus: "in_stock"
+  };
+  if (!descString) return result;
+  
+  const match = descString.match(/<!--PERS:NAME=(true|false),NUMBER=(true|false)-->/);
+  if (match) {
+    result.allowName = match[1] === "true";
+    result.allowNumber = match[2] === "true";
+  }
+
+  const stockMatch = descString.match(/<!--STOCK:STATUS=(in_stock|out_of_stock)-->/);
+  if (stockMatch) {
+    result.stockStatus = stockMatch[1];
+  }
+
+  result.cleanDescription = descString
+    .replace(/<!--PERS:NAME=(true|false),NUMBER=(true|false)-->/g, "")
+    .replace(/<!--STOCK:STATUS=(in_stock|out_of_stock)-->/g, "")
+    .trim();
+
+  return result;
+};
+
+const getDisplayImage = (p) => {
+  if (!p) return "";
+  const isTemplate = p.is_template === true || !!p.glb_file_url || (p.category && (p.category.toLowerCase().trim() === "template" || p.category.toLowerCase().trim() === "custom-template" || p.category.toLowerCase().trim().startsWith("custom-"))) || (p.name && (p.name.toLowerCase().includes("template") || p.name.toLowerCase().includes("blank")));
+  if (isTemplate && p.gallery_urls) {
+    const urls = p.gallery_urls.includes(",") 
+      ? p.gallery_urls.split(",").map(u => u.trim()).filter(Boolean)
+      : [p.gallery_urls.trim()];
+    if (urls.length > 0) return urls[0];
+  }
+  return p.texture_url || "";
+};
+
 export default function DashboardPage() {
   const router = useRouter();
   const [session, setSession] = useState(null);
@@ -45,11 +86,22 @@ export default function DashboardPage() {
   // Products state
   const [products, setProducts] = useState([]);
   const [loadingProducts, setLoadingProducts] = useState(true);
+  const [activeOffersMap, setActiveOffersMap] = useState({}); // { product_id: { discount_percent, ends_at } }
   const [activeCategory, setActiveCategory] = useState("all");
   const [preloadedDecalDataUrl, setPreloadedDecalDataUrl] = useState(null);
   const [searchQuery, setSearchQuery] = useState("");
   const [sortOrder, setSortOrder] = useState("newest"); // newest, price-asc, price-desc
+  const [shopType, setShopType] = useState("ready-to-wear"); // ready-to-wear or customizable
+  
+  // Advanced filters state
+  const [showFilterPanel, setShowFilterPanel] = useState(false);
+  const [maxPriceFilter, setMaxPriceFilter] = useState(10000); // 10000 is ceiling (no limit initially)
+  const [inStockOnly, setInStockOnly] = useState(false);
+  const [customizableOnly, setCustomizableOnly] = useState(false);
   const [hoveredProductId, setHoveredProductId] = useState(null);
+  const [fabricFilter, setFabricFilter] = useState("all");
+  const [ratingFilter, setRatingFilter] = useState("all");
+  const [genderFilter, setGenderFilter] = useState("all");
   // Dynamic categories — synced from admin Category Manager via localStorage
   const [catalogCategories, setCatalogCategories] = useState([
     { id: "t-shirt",    label: "T-Shirts" },
@@ -186,7 +238,26 @@ export default function DashboardPage() {
         console.warn("Supabase past orders fetch failed, reading from local backup...", error.message);
         loadLocalPastOrdersFallback();
       } else if (data && data.length > 0) {
-        setPastOrders(data);
+        const mappedData = data.map(o => {
+          if (!o.shipping_details && o.customer_name) {
+            return {
+              ...o,
+              shipping_details: {
+                name: o.customer_name,
+                email: o.customer_email,
+                phone: o.customer_phone,
+                address: o.shipping_address?.address || o.shipping_address || "",
+                city: o.shipping_address?.city || "",
+                state: o.shipping_address?.state || "",
+                zip: o.shipping_address?.zip || "",
+                coupon_code: o.shipping_address?.coupon_code || null,
+                payment_details: o.shipping_address?.payment_details || null
+              }
+            };
+          }
+          return o;
+        });
+        setPastOrders(mappedData);
       } else {
         loadLocalPastOrdersFallback();
       }
@@ -523,6 +594,7 @@ export default function DashboardPage() {
       setSession(currentSession);
       setCheckingAuth(false);
       fetchProducts();
+      fetchActiveOffers();
       loadWishlist();
       fetchPastOrders();
       loadPersistentNotifications();
@@ -545,7 +617,7 @@ export default function DashboardPage() {
     return () => window.removeEventListener("wishlist-updated", loadWishlist);
   }, []);
 
-  // Handle URL query parameters for dynamic view state (e.g. tracking tab)
+  // Handle URL query parameters for dynamic view state (e.g. tracking tab, category filter, search)
   useEffect(() => {
     if (typeof window !== "undefined" && !checkingAuth) {
       const params = new URLSearchParams(window.location.search);
@@ -560,9 +632,30 @@ export default function DashboardPage() {
       } else if (tabParam === "shop") {
         setActiveDashboardTab("shop");
       }
+
+      const typeParam = params.get("type");
+      if (typeParam === "customizable" || typeParam === "custom") {
+        setShopType("customizable");
+        setActiveDashboardTab("shop");
+      } else if (typeParam === "ready-to-wear" || typeParam === "non-customizable") {
+        setShopType("ready-to-wear");
+        setActiveDashboardTab("shop");
+      }
+
+      const categoryParam = params.get("category") || params.get("cat");
+      if (categoryParam) {
+        setActiveCategory(categoryParam.toLowerCase().trim());
+        setActiveDashboardTab("shop");
+      }
+
+      const qParam = params.get("q");
+      if (qParam) {
+        setSearchQuery(qParam.trim());
+        setActiveDashboardTab("shop");
+      }
       
       // Clean query parameters from URL to keep UI clean
-      if (tabParam) {
+      if (tabParam || categoryParam || qParam || typeParam) {
         const newUrl = window.location.pathname + (window.location.hash || "");
         window.history.replaceState({}, document.title, newUrl);
       }
@@ -573,17 +666,136 @@ export default function DashboardPage() {
   async function fetchProducts() {
     setLoadingProducts(true);
     try {
-      const { data, error } = await supabase
+      const { data: productsData, error: productsError } = await supabase
         .from("products")
         .select("*")
         .order("created_at", { ascending: false });
 
-      if (error) throw error;
-      setProducts(data || []);
+      if (productsError) throw productsError;
+
+      // Query database reviews
+      let reviewsData = [];
+      try {
+        const { data, error } = await supabase
+          .from("product_reviews")
+          .select("product_id, rating");
+        if (!error && data) reviewsData = data;
+      } catch (err) {
+        console.warn("Failed to fetch db reviews:", err);
+      }
+
+      // Query local reviews
+      let localReviews = [];
+      try {
+        const stored = localStorage.getItem("apparel_reviews_local");
+        if (stored) localReviews = JSON.parse(stored);
+      } catch (err) {
+        console.warn("Failed to parse local reviews:", err);
+      }
+
+      const allReviews = [...reviewsData, ...localReviews];
+      const ratingMap = {};
+      allReviews.forEach(rev => {
+        const pId = rev.product_id;
+        if (!pId) return;
+        const rating = Number(rev.rating);
+        if (isNaN(rating)) return;
+        if (!ratingMap[pId]) {
+          ratingMap[pId] = { sum: 0, count: 0 };
+        }
+        ratingMap[pId].sum += rating;
+        ratingMap[pId].count += 1;
+      });
+
+      const processed = (productsData || []).map(p => {
+        const stats = ratingMap[p.id];
+        const avg = stats ? stats.sum / stats.count : null;
+        return {
+          ...p,
+          averageRating: avg
+        };
+      });
+
+      setProducts(processed);
     } catch (err) {
       console.error("Error fetching products:", err.message);
     } finally {
       setLoadingProducts(false);
+    }
+  }
+
+  const fetchActiveOffers = async () => {
+    try {
+      const res = await fetch("/api/announcement");
+      const data = await res.json();
+      if (res.ok && data) {
+        const now = new Date();
+        const offersMap = {};
+        
+        if (Array.isArray(data.flash_offers_list)) {
+          data.flash_offers_list.forEach(offer => {
+            if (offer.ends_at && new Date(offer.ends_at) > now) {
+              offersMap[offer.product_id] = {
+                discount_percent: Number(offer.discount_percent),
+                ends_at: offer.ends_at
+              };
+            }
+          });
+        }
+        
+        if (Object.keys(offersMap).length === 0 && data.offer_product_id && data.offer_ends_at) {
+          const diff = +new Date(data.offer_ends_at) - +new Date();
+          if (diff > 0) {
+            offersMap[data.offer_product_id] = {
+              discount_percent: Number(data.offer_discount_percent),
+              ends_at: data.offer_ends_at
+            };
+          }
+        }
+        
+        setActiveOffersMap(offersMap);
+      } else {
+        applyLocalOffersFallback();
+      }
+    } catch (err) {
+      console.error("Error fetching active offers:", err);
+      applyLocalOffersFallback();
+    }
+  };
+
+  const applyLocalOffersFallback = () => {
+    try {
+      const saved = localStorage.getItem("apparel_storefront_settings_local");
+      if (saved) {
+        const parsed = JSON.parse(saved);
+        const now = new Date();
+        const offersMap = {};
+        
+        if (Array.isArray(parsed.flash_offers_list)) {
+          parsed.flash_offers_list.forEach(offer => {
+            if (offer.ends_at && new Date(offer.ends_at) > now) {
+              offersMap[offer.product_id] = {
+                discount_percent: Number(offer.discount_percent),
+                ends_at: offer.ends_at
+              };
+            }
+          });
+        }
+        
+        if (Object.keys(offersMap).length === 0 && parsed.offer_product_id && parsed.offer_ends_at) {
+          const diff = +new Date(parsed.offer_ends_at) - +new Date();
+          if (diff > 0) {
+            offersMap[parsed.offer_product_id] = {
+              discount_percent: Number(parsed.offer_discount_percent),
+              ends_at: parsed.offer_ends_at
+            };
+          }
+        }
+        
+        setActiveOffersMap(offersMap);
+      }
+    } catch (e) {
+      console.error("Local offers fallback failed:", e);
     }
   };
 
@@ -869,15 +1081,19 @@ export default function DashboardPage() {
       name: `${checkoutProduct.name} (Premium Organic Cotton)`,
       baseTexture: checkoutProduct.texture_url,
       glbUrl: checkoutProduct.glb_file_url,
-      thumbnailUrl: checkoutProduct.texture_url,
+      thumbnailUrl: getDisplayImage(checkoutProduct),
       size: checkoutSize,
       quantity: 1,
       addedAt: new Date().toISOString(),
-      price: checkoutProduct.price || 3999,
+      price: activeOffersMap[checkoutProduct.id]
+        ? Math.round(checkoutProduct.price * (1 - activeOffersMap[checkoutProduct.id].discount_percent / 100))
+        : (checkoutProduct.price || 3999),
       fabric: "cotton"
     };
 
-    const subtotal = checkoutProduct.price || 3999;
+    const subtotal = activeOffersMap[checkoutProduct.id]
+      ? Math.round(checkoutProduct.price * (1 - activeOffersMap[checkoutProduct.id].discount_percent / 100))
+      : (checkoutProduct.price || 3999);
     const discountAmount = checkoutAppliedDiscount > 0 ? (subtotal * (checkoutAppliedDiscount / 100)) : 0;
     const shippingInfo = getShippingDetailsCheckout(checkoutZip);
     const deliveryFee = shippingInfo.fee;
@@ -925,6 +1141,18 @@ export default function DashboardPage() {
   };
 
   const handleBuyNowClick = async (product) => {
+    if (!product) return;
+    const dbStockStatus = product.stock_status || null;
+    const rawStockLocal = typeof window !== "undefined" ? localStorage.getItem(`apparel_stock_${product.id}`) : null;
+    const pers = parseDescriptionPersonalization(product.description);
+    const stockStatus = rawStockLocal || dbStockStatus || pers.stockStatus || "in_stock";
+    if (stockStatus === "out_of_stock") {
+      setActiveToast({
+        title: "⚠️ Product Out of Stock",
+        message: `Sorry, ${product.name} is currently out of stock.`
+      });
+      return;
+    }
     const { data: { session: currentSession } } = await supabase.auth.getSession();
     if (!currentSession) {
       router.push("/auth");
@@ -958,6 +1186,20 @@ export default function DashboardPage() {
       router.push("/auth");
       return;
     }
+
+    const dbStockStatus = product.stock_status || null;
+    const rawStockLocal = typeof window !== "undefined" ? localStorage.getItem(`apparel_stock_${product.id}`) : null;
+    const pers = parseDescriptionPersonalization(product.description);
+    const stockStatus = rawStockLocal || dbStockStatus || pers.stockStatus || "in_stock";
+
+    if (stockStatus === "out_of_stock") {
+      setActiveToast({
+        title: "⚠️ Out of Stock",
+        message: `Sorry, ${product.name} is currently out of stock.`
+      });
+      return;
+    }
+
     const itemId = `cart_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
     const cartItem = {
       id: itemId,
@@ -965,7 +1207,7 @@ export default function DashboardPage() {
       name: `${product.name} (Matte Organic Cotton)`,
       baseTexture: product.texture_url,
       glbUrl: product.glb_file_url,
-      thumbnailUrl: product.texture_url,
+      thumbnailUrl: getDisplayImage(product),
       size: "M",
       quantity: 1,
       addedAt: new Date().toISOString(),
@@ -1003,15 +1245,106 @@ export default function DashboardPage() {
   };
   const filteredProducts = products
     .filter(product => {
-      if (isTemplateProduct(product)) return false;
+      const isTemplate = isTemplateProduct(product);
+      if (shopType === "ready-to-wear" && isTemplate) return false;
+      if (shopType === "customizable" && !isTemplate) return false;
+
       if (activeCategory !== "all") {
-        const cat = (product.category || "").toLowerCase();
-        if (cat !== activeCategory) return false;
+        const cat = (product.category || "").toLowerCase().trim();
+        const name = (product.name || "").toLowerCase();
+        
+        let isMatch = cat === activeCategory;
+        if (!isMatch && isTemplate) {
+          if (activeCategory === "t-shirt" && (name.includes("tee") || name.includes("t-shirt") || name.includes("shirt"))) {
+            isMatch = true;
+          } else if (activeCategory === "hoodie" && (name.includes("hoodie") || name.includes("sweatshirt"))) {
+            isMatch = true;
+          } else if (activeCategory === "jacket" && name.includes("jacket")) {
+            isMatch = true;
+          } else if (activeCategory === "activewear" && (name.includes("active") || name.includes("gym") || name.includes("sport"))) {
+            isMatch = true;
+          }
+        }
+        if (!isMatch) return false;
       }
       if (searchQuery.trim()) {
         const q = searchQuery.toLowerCase();
         if (!product.name.toLowerCase().includes(q) && !(product.description || "").toLowerCase().includes(q)) return false;
       }
+
+      // Max price range filter
+      if (maxPriceFilter !== "" && maxPriceFilter !== null && maxPriceFilter !== undefined && maxPriceFilter !== 10000) {
+        const price = Number(product.price) || 3999;
+        if (price > Number(maxPriceFilter)) return false;
+      }
+
+      // Stock status filter
+      if (inStockOnly) {
+        const dbStockStatus = product.stock_status || null;
+        const rawStockLocal = typeof window !== "undefined" ? localStorage.getItem(`apparel_stock_${product.id}`) : null;
+        const pers = parseDescriptionPersonalization(product.description);
+        const status = rawStockLocal || dbStockStatus || pers.stockStatus || "in_stock";
+        if (status === "out_of_stock") return false;
+      }
+
+      // Personalization filter
+      if (customizableOnly) {
+        const parsed = parseDescriptionPersonalization(product.description);
+        const nameAllowed = product.allow_name || parsed.allowName;
+        const numAllowed = product.allow_number || parsed.allowNumber;
+        if (!nameAllowed && !numAllowed) return false;
+      }
+
+      // Target Audience / Gender filter
+      if (genderFilter !== "all") {
+        const prodGender = (product.gender || localStorage.getItem(`apparel_gender_${product.id}`) || "unisex").toLowerCase();
+        if (genderFilter === "men") {
+          if (prodGender !== "men" && prodGender !== "unisex") return false;
+        } else if (genderFilter === "women") {
+          if (prodGender !== "women" && prodGender !== "unisex") return false;
+        } else {
+          if (prodGender !== genderFilter) return false;
+        }
+      }
+
+      // Fabric / Material filter
+      if (fabricFilter !== "all") {
+        let materialText = "";
+        try {
+          const rawSpecs = localStorage.getItem(`apparel_specs_${product.id}`);
+          if (rawSpecs) {
+            const specs = JSON.parse(rawSpecs);
+            const matSpec = specs.find(s => s.key && s.key.toLowerCase().includes("material"));
+            if (matSpec && matSpec.val) {
+              materialText = matSpec.val.toLowerCase();
+            }
+          }
+        } catch (e) {
+          console.warn("Failed to read specs for product material filter:", e);
+        }
+
+        // If not found in specs, fall back to searching in name & description text
+        if (!materialText) {
+          materialText = `${product.name} ${product.description || ""}`.toLowerCase();
+        }
+
+        let detectedFabric = "cotton";
+        if (materialText.includes("cotton")) {
+          detectedFabric = "cotton";
+        } else if (materialText.includes("polyester") || materialText.includes("poly") || materialText.includes("athletic")) {
+          detectedFabric = "polyester";
+        } else if (materialText.includes("fleece") || materialText.includes("jacket") || materialText.includes("warm")) {
+          detectedFabric = "fleece";
+        }
+        if (detectedFabric !== fabricFilter) return false;
+      }
+
+      // Minimum Review Rating filter
+      if (ratingFilter !== "all") {
+        const avg = product.averageRating !== null && product.averageRating !== undefined ? product.averageRating : 5.0;
+        if (avg < Number(ratingFilter)) return false;
+      }
+
       return true;
     })
     .sort((a, b) => {
@@ -1039,7 +1372,7 @@ export default function DashboardPage() {
   }
 
   return (
-    <div className="min-h-screen bg-zinc-950 text-white font-sans pb-20 relative overflow-x-hidden">
+    <div className="min-h-screen bg-zinc-950 text-white font-sans pb-20 relative overflow-x-clip">
       
       {/* Glow effects for modern UI */}
       <div className="absolute top-0 left-1/4 w-[500px] h-[500px] bg-indigo-500/10 rounded-full blur-[120px] pointer-events-none" />
@@ -1118,6 +1451,54 @@ export default function DashboardPage() {
 
         {activeDashboardTab === "shop" ? (
           <>
+            {/* Segment Toggle: Ready-to-Wear vs Customizable 3D Canvas */}
+            <div className="mb-10 bg-zinc-950/60 backdrop-blur-md border border-zinc-900 p-2 rounded-2xl flex flex-col sm:flex-row max-w-3xl mx-auto shadow-2xl select-none gap-2">
+              <button
+                type="button"
+                onClick={() => setShopType("ready-to-wear")}
+                className={`flex-1 py-3.5 px-5 rounded-xl text-sm font-black transition-all duration-300 cursor-pointer flex flex-col sm:flex-row items-center justify-center gap-2.5 relative overflow-hidden group ${
+                  shopType === "ready-to-wear"
+                    ? "bg-indigo-600 text-white shadow-lg shadow-indigo-600/25 border border-indigo-500"
+                    : "text-zinc-500 hover:text-zinc-350 hover:bg-zinc-900/30 border border-transparent"
+                }`}
+              >
+                <div className="flex items-center gap-2">
+                  <ShoppingBag className={`w-4.5 h-4.5 transition-transform duration-300 ${shopType === "ready-to-wear" ? "scale-110" : "group-hover:scale-110"}`} />
+                  <span className="tracking-wide uppercase">Ready-To-Wear Shop</span>
+                </div>
+                <span className={`text-[9px] font-extrabold px-2 py-0.5 rounded-full uppercase tracking-widest transition-colors duration-300 border ${
+                  shopType === "ready-to-wear"
+                    ? "bg-indigo-700/60 border-indigo-550 text-indigo-200"
+                    : "bg-zinc-900 border-zinc-850 text-zinc-650 group-hover:text-zinc-400"
+                }`}>
+                  Instant Buy
+                </span>
+              </button>
+              
+              <button
+                type="button"
+                onClick={() => setShopType("customizable")}
+                className={`flex-1 py-3.5 px-5 rounded-xl text-sm font-black transition-all duration-300 cursor-pointer flex flex-col sm:flex-row items-center justify-center gap-2.5 relative overflow-hidden group ${
+                  shopType === "customizable"
+                    ? "bg-indigo-600 text-white shadow-lg shadow-indigo-600/25 border border-indigo-500"
+                    : "text-zinc-500 hover:text-zinc-350 hover:bg-zinc-900/30 border border-transparent"
+                }`}
+              >
+                <div className="flex items-center gap-2">
+                  <Sparkles className={`w-4.5 h-4.5 transition-transform duration-300 ${shopType === "customizable" ? "scale-110 rotate-12" : "group-hover:scale-110 group-hover:rotate-12"}`} />
+                  <span className="tracking-wide uppercase">Customizables</span>
+                </div>
+                <span className={`text-[9px] font-extrabold px-2 py-0.5 rounded-full uppercase tracking-widest transition-colors duration-300 border ${
+                  shopType === "customizable"
+                    ? "bg-indigo-700/60 border-indigo-550 text-indigo-200"
+                    : "bg-zinc-900 border-zinc-850 text-zinc-650 group-hover:text-zinc-400"
+                }`}>
+                  Design 3D
+                </span>
+              </button>
+            </div>
+
+
             {/* Search + Sort + Category Filter Bar */}
             <section className="mb-8 space-y-4">
               {/* Search + Sort row */}
@@ -1146,7 +1527,192 @@ export default function DashboardPage() {
                   <option value="price-asc">Price: Low to High</option>
                   <option value="price-desc">Price: High to Low</option>
                 </select>
+
+                <button
+                  type="button"
+                  onClick={() => setShowFilterPanel(!showFilterPanel)}
+                  className={`bg-zinc-900/60 border rounded-xl px-4 py-2.5 text-xs font-semibold flex items-center gap-1.5 transition-all cursor-pointer select-none ${
+                    showFilterPanel || maxPriceFilter < 10000 || inStockOnly || customizableOnly || fabricFilter !== "all" || ratingFilter !== "all" || genderFilter !== "all"
+                      ? "border-indigo-500 text-indigo-400"
+                      : "border-zinc-800 text-zinc-300 hover:border-zinc-700"
+                  }`}
+                >
+                  <Sliders className="w-3.5 h-3.5" />
+                  <span>Filters</span>
+                  {(maxPriceFilter < 10000 || inStockOnly || customizableOnly || fabricFilter !== "all" || ratingFilter !== "all" || genderFilter !== "all") && (
+                    <span className="w-1.5 h-1.5 rounded-full bg-indigo-500 animate-pulse" />
+                  )}
+                </button>
               </div>
+
+              {/* Expandable Filter Panel */}
+              {showFilterPanel && (
+                <div className="bg-zinc-900/30 border border-zinc-900/80 rounded-2xl p-5 grid grid-cols-1 sm:grid-cols-5 gap-5 animate-in slide-in-from-top-4 duration-200">
+                  {/* Synced Price Range Slider & Manual Input */}
+                  <div className="space-y-3 sm:col-span-1">
+                    <h4 className="text-[10px] uppercase tracking-wider font-black text-zinc-550 select-none">Max Price Limit</h4>
+                    <div className="space-y-4">
+                      {/* Price indicator & Manual input */}
+                      <div className="flex items-center justify-between">
+                        <span className="text-[11px] font-black text-indigo-400">
+                          {maxPriceFilter === "" || maxPriceFilter >= 10000 ? "No Limit" : `Max: ₹${maxPriceFilter}`}
+                        </span>
+                        
+                        <div className="flex items-center gap-1.5 bg-zinc-950 border border-zinc-850 px-2 py-1 rounded-lg">
+                          <span className="text-[10px] text-zinc-600 font-bold select-none">₹</span>
+                          <input
+                            type="number"
+                            min="500"
+                            max="10000"
+                            value={maxPriceFilter}
+                            onChange={(e) => {
+                              const val = e.target.value === "" ? "" : Math.min(100000, Number(e.target.value));
+                              setMaxPriceFilter(val);
+                            }}
+                            className="w-16 bg-transparent border-0 text-right text-xs text-white font-black font-mono focus:outline-none placeholder-zinc-700"
+                            placeholder="10000"
+                          />
+                        </div>
+                      </div>
+
+                      {/* Slider bar */}
+                      <div className="flex items-center gap-2 select-none">
+                        <span className="text-[9px] font-black text-zinc-600">₹500</span>
+                        <input
+                          type="range"
+                          min="500"
+                          max="10000"
+                          step="100"
+                          value={maxPriceFilter === "" ? 10000 : maxPriceFilter}
+                          onChange={(e) => setMaxPriceFilter(Number(e.target.value))}
+                          className="w-full h-1 bg-zinc-800 rounded-lg appearance-none cursor-pointer accent-indigo-500 hover:bg-zinc-700 transition-colors"
+                        />
+                        <span className="text-[9px] font-black text-zinc-600">₹10K</span>
+                      </div>
+                    </div>
+                  </div>
+
+                  {/* Fabric / Material Column */}
+                  <div className="space-y-2.5">
+                    <h4 className="text-[10px] uppercase tracking-wider font-black text-zinc-550 select-none">Fabric / Material</h4>
+                    <div className="flex flex-col gap-1.5">
+                      {["all", "cotton", "polyester", "fleece"].map((fab) => {
+                        const isActive = fabricFilter === fab;
+                        return (
+                          <button
+                            key={fab}
+                            onClick={() => setFabricFilter(fab)}
+                            className={`px-3 py-1.5 text-left text-xs rounded-xl font-bold uppercase tracking-wider transition-all flex items-center gap-2 border cursor-pointer select-none ${
+                              isActive
+                                ? "bg-indigo-600/15 border-indigo-500 text-indigo-400 font-extrabold shadow-sm"
+                                : "bg-zinc-950/40 border-zinc-900/60 text-zinc-400 hover:text-zinc-300 hover:border-zinc-800"
+                            }`}
+                          >
+                            <span className={`w-1.5 h-1.5 rounded-full ${isActive ? 'bg-indigo-400' : 'bg-transparent'}`} />
+                            <span>{fab === "all" ? "All Fabrics" : fab}</span>
+                          </button>
+                        );
+                      })}
+                    </div>
+                  </div>
+
+                  {/* Rating / Reviews Column */}
+                  <div className="space-y-2.5">
+                    <h4 className="text-[10px] uppercase tracking-wider font-black text-zinc-550 select-none">Minimum Rating</h4>
+                    <div className="flex flex-col gap-1.5">
+                      {[
+                        { id: "all", label: "All Ratings", val: 0 },
+                        { id: "4.5", label: "4.5+ ★ & Above", val: 4.5 },
+                        { id: "4.0", label: "4.0+ ★ & Above", val: 4.0 },
+                        { id: "3.0", label: "3.0+ ★ & Above", val: 3.0 }
+                      ].map((opt) => {
+                        const isActive = ratingFilter === opt.id;
+                        return (
+                          <button
+                            key={opt.id}
+                            onClick={() => setRatingFilter(opt.id)}
+                            className={`px-3 py-1.5 text-left text-xs rounded-xl font-bold transition-all flex items-center justify-between border cursor-pointer select-none ${
+                              isActive
+                                ? "bg-indigo-600/15 border-indigo-500 text-indigo-400 font-extrabold shadow-sm"
+                                : "bg-zinc-950/40 border-zinc-900/60 text-zinc-400 hover:text-zinc-300 hover:border-zinc-800"
+                            }`}
+                          >
+                            <span>{opt.label}</span>
+                            {opt.val > 0 && (
+                              <div className="flex items-center gap-0.5 shrink-0">
+                                <svg className="w-3 h-3 text-amber-400 fill-amber-400" viewBox="0 0 24 24"><path d="M12 17.27L18.18 21l-1.64-7.03L22 9.24l-7.19-.61L12 2 9.19 8.63 2 9.24l5.46 4.73L5.82 21z"/></svg>
+                              </div>
+                            )}
+                          </button>
+                        );
+                      })}
+                    </div>
+                  </div>
+
+                  {/* Gender / Target Group Column */}
+                  <div className="space-y-2.5">
+                    <h4 className="text-[10px] uppercase tracking-wider font-black text-zinc-550 select-none">Target Audience / Gender</h4>
+                    <div className="flex flex-col gap-1.5">
+                      {[
+                        { id: "all", label: "All Segments" },
+                        { id: "men", label: "Men" },
+                        { id: "women", label: "Women" },
+                        { id: "kids", label: "Kids" },
+                        { id: "unisex", label: "Unisex Only" }
+                      ].map((opt) => {
+                        const isActive = genderFilter === opt.id;
+                        return (
+                          <button
+                            key={opt.id}
+                            onClick={() => setGenderFilter(opt.id)}
+                            className={`px-3 py-1.5 text-left text-xs rounded-xl font-bold uppercase tracking-wider transition-all flex items-center gap-2 border cursor-pointer select-none ${
+                              isActive
+                                ? "bg-indigo-600/15 border-indigo-500 text-indigo-400 font-extrabold shadow-sm"
+                                : "bg-zinc-950/40 border-zinc-900/60 text-zinc-400 hover:text-zinc-300 hover:border-zinc-800"
+                            }`}
+                          >
+                            <span className={`w-1.5 h-1.5 rounded-full ${isActive ? 'bg-indigo-400' : 'bg-transparent'}`} />
+                            <span>{opt.label}</span>
+                          </button>
+                        );
+                      })}
+                    </div>
+                  </div>
+
+                  {/* Availability & Customization Checkboxes Column */}
+                  <div className="space-y-4">
+                    <div className="space-y-2.5">
+                      <h4 className="text-[10px] uppercase tracking-wider font-black text-zinc-550 select-none">Availability</h4>
+                      <div className="flex flex-col gap-2">
+                        <label className="flex items-center gap-2 text-xs text-zinc-300 font-semibold cursor-pointer select-none">
+                          <input
+                            type="checkbox"
+                            checked={inStockOnly}
+                            onChange={(e) => setInStockOnly(e.target.checked)}
+                            className="w-3.5 h-3.5 rounded accent-indigo-500 cursor-pointer"
+                          />
+                          <span>In Stock Only</span>
+                        </label>
+                      </div>
+                    </div>
+
+                    <div className="space-y-2.5">
+                      <h4 className="text-[10px] uppercase tracking-wider font-black text-zinc-550 select-none">Customization</h4>
+                      <div className="flex flex-col gap-2">
+                        <label className="flex items-center gap-2 text-xs text-zinc-300 font-semibold cursor-pointer select-none">
+                          <input
+                            type="checkbox"
+                            checked={customizableOnly}
+                            onChange={(e) => setCustomizableOnly(e.target.checked)}
+                            className="w-3.5 h-3.5 rounded accent-indigo-500 cursor-pointer"
+                          />
+                          <span>Custom Name & Number</span>
+                        </label>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              )}
 
               {/* Category pills */}
               <div className="flex items-center gap-2.5 flex-wrap justify-between">
@@ -1170,7 +1736,7 @@ export default function DashboardPage() {
                     );
                   })}
                 </div>
-                {(searchQuery || activeCategory !== "all") && (
+                {(searchQuery || activeCategory !== "all" || maxPriceFilter !== 10000 || inStockOnly || customizableOnly || fabricFilter !== "all" || ratingFilter !== "all" || genderFilter !== "all") && (
                   <span className="text-sm text-zinc-500 font-medium bg-zinc-900/40 border border-zinc-800/60 px-3 py-1.5 rounded-xl ml-auto">{filteredProducts.length} result{filteredProducts.length !== 1 ? 's' : ''}</span>
                 )}
               </div>
@@ -1187,10 +1753,14 @@ export default function DashboardPage() {
                 <div className="py-20 text-center border border-dashed border-zinc-800 rounded-2xl bg-zinc-900/10 max-w-xl mx-auto">
                   <Layers className="w-12 h-12 mx-auto text-zinc-700 mb-4" />
                   <p className="text-sm font-semibold text-zinc-400">
-                    {searchQuery ? `No results for "${searchQuery}"` : "No apparel found in this category."}
+                    {searchQuery 
+                      ? `No results for "${searchQuery}"` 
+                      : (maxPriceFilter !== 10000 || inStockOnly || customizableOnly || fabricFilter !== "all" || ratingFilter !== "all" || genderFilter !== "all") 
+                        ? "No apparel matches the active filters." 
+                        : "No apparel found in this category."}
                   </p>
-                  {(searchQuery || activeCategory !== "all") && (
-                    <button onClick={() => { setSearchQuery(""); setActiveCategory("all"); }} className="mt-3 text-xs text-indigo-400 hover:underline font-bold cursor-pointer">Clear filters</button>
+                  {(searchQuery || activeCategory !== "all" || maxPriceFilter !== 10000 || inStockOnly || customizableOnly || fabricFilter !== "all" || ratingFilter !== "all" || genderFilter !== "all") && (
+                    <button onClick={() => { setSearchQuery(""); setActiveCategory("all"); setMaxPriceFilter(10000); setInStockOnly(false); setCustomizableOnly(false); setFabricFilter("all"); setRatingFilter("all"); setGenderFilter("all"); }} className="mt-3 text-xs text-indigo-400 hover:underline font-bold cursor-pointer">Clear filters</button>
                   )}
                 </div>
               ) : (
@@ -1284,14 +1854,14 @@ export default function DashboardPage() {
                           {/* Right: Floating customizable SVG apparel mockup */}
                           <div className="md:w-2/5 flex items-center justify-center relative shrink-0">
                             {/* Glow backing */}
-                            <div className="absolute w-44 h-44 rounded-full border border-indigo-500/10 glow-ring bg-indigo-500/5 blur-2xl pointer-events-none" />
-                            <div className="absolute w-36 h-36 rounded-full border border-zinc-800/80 flex items-center justify-center pointer-events-none">
-                              <div className="w-28 h-28 rounded-full border border-dashed border-indigo-500/20 animate-spin" style={{ animationDuration: '20s' }} />
+                            <div className="absolute w-56 h-56 rounded-full border border-indigo-500/10 glow-ring bg-indigo-500/5 blur-2xl pointer-events-none" />
+                            <div className="absolute w-48 h-48 rounded-full border border-zinc-800/80 flex items-center justify-center pointer-events-none">
+                              <div className="w-36 h-36 rounded-full border border-dashed border-indigo-500/20 animate-spin" style={{ animationDuration: '20s' }} />
                             </div>
                             
                             {/* T-Shirt Vector */}
                             <div className="relative banner-floating z-10 select-none pointer-events-none">
-                              <svg viewBox="0 0 100 100" className="w-36 h-36 transition-all duration-500" style={{ filter: `drop-shadow(0 15px 25px ${bannerColor}35)` }}>
+                              <svg viewBox="0 0 100 100" className="w-48 h-48 transition-all duration-500" style={{ filter: `drop-shadow(0 15px 25px ${bannerColor}35)` }}>
                                 <path
                                   d="M20,15 L32,5 L45,10 L50,12 L55,10 L68,5 L80,15 L74,32 L68,30 L68,88 L32,88 L32,30 L26,32 Z"
                                   fill={bannerColor}
@@ -1376,22 +1946,43 @@ export default function DashboardPage() {
                           ? [product.gallery_urls]
                           : product.gallery_urls.split(",").map(u => u.trim()).filter(Boolean))
                       : [];
+                    const isTemplate = product.is_template === true || !!product.glb_file_url || isTemplateProduct(product);
+                    const mainImage = getDisplayImage(product);
                     const uniqueGalleryImages = galleryImages.filter(u => u !== product.texture_url);
-                    const hoverImage = uniqueGalleryImages.length > 0 ? uniqueGalleryImages[0] : null;
+                    const hoverImage = isTemplate
+                      ? (galleryImages.length > 1 ? galleryImages[1] : null)
+                      : (uniqueGalleryImages.length > 0 ? uniqueGalleryImages[0] : null);
                     const isHovered = hoveredProductId === product.id;
+
+                    const dbStockStatus = product.stock_status || null;
+                    const rawStockLocal = typeof window !== "undefined" ? localStorage.getItem(`apparel_stock_${product.id}`) : null;
+                    const pers = parseDescriptionPersonalization(product.description);
+                    const stockStatus = rawStockLocal || dbStockStatus || pers.stockStatus || "in_stock";
+
                     return (
                       <div
                         key={product.id}
                         className="bg-zinc-900/25 border border-zinc-900/80 hover:border-zinc-700 rounded-2xl overflow-hidden transition-all flex flex-col group shadow-sm hover:shadow-xl hover:shadow-zinc-950/60 cursor-pointer"
                         onMouseEnter={() => setHoveredProductId(product.id)}
                         onMouseLeave={() => setHoveredProductId(null)}
-                        onClick={() => router.push(`/product/${product.id}`)}
+                        onClick={() => {
+                          if (isTemplate) {
+                            if (preloadedDecalDataUrl) {
+                              localStorage.setItem("apparel_preloaded_decal", preloadedDecalDataUrl);
+                            } else {
+                              localStorage.removeItem("apparel_preloaded_decal");
+                            }
+                            router.push(`/studio?product=${getSlug(product.name)}`);
+                          } else {
+                            router.push(`/product/${product.id}`);
+                          }
+                        }}
                       >
                         {/* Portrait Image Frame — Amazon style */}
                         <div className="relative w-full bg-zinc-950 overflow-hidden" style={{ aspectRatio: '3/4' }}>
                           {/* Main image */}
                           <img
-                            src={product.texture_url}
+                            src={mainImage}
                             alt={product.name}
                             className={`absolute inset-0 w-full h-full object-cover transition-all duration-500 ${hoverImage && isHovered ? "opacity-0" : "opacity-90 group-hover:opacity-100"}`}
                             onError={(e) => { e.target.style.display = 'none'; }}
@@ -1418,6 +2009,13 @@ export default function DashboardPage() {
                             </div>
                           )}
                           
+                          {/* Out of Stock visual overlay badge */}
+                          {stockStatus === "out_of_stock" && (
+                            <div className="absolute top-2.5 right-2.5 bg-rose-600/90 border border-rose-550/30 text-[9px] text-white font-extrabold px-2 py-0.5 rounded-full uppercase tracking-wider backdrop-blur-sm z-10 shadow-md">
+                              Out of Stock
+                            </div>
+                          )}
+                          
                           {/* Wishlist Heart Overlay */}
                           <button
                             onClick={(e) => handleToggleWishlist(product, e)}
@@ -1426,15 +2024,48 @@ export default function DashboardPage() {
                             <Heart className={`w-4 h-4 ${wishlist.includes(product.id) ? "fill-rose-500 text-rose-500" : ""}`} />
                           </button>
 
-                          {/* Quick add overlay on hover */}
+                          {/* Flash offer badge */}
+                          {activeOffersMap[product.id] && (
+                            <div className="absolute top-2.5 left-10 bg-rose-600 border border-rose-550/30 text-[9px] text-white font-extrabold px-2.5 py-0.5 rounded-full uppercase tracking-wider backdrop-blur-sm z-10 shadow-md animate-pulse">
+                              🔥 {activeOffersMap[product.id].discount_percent}% OFF
+                            </div>
+                          )}
+
+                          {/* Quick add / Design in 3D overlay on hover */}
                           <div className={`absolute inset-x-0 bottom-0 p-3 bg-gradient-to-t from-zinc-950 to-transparent transition-opacity duration-200 ${isHovered ? "opacity-100" : "opacity-0"}`}>
-                            <button
-                              onClick={(e) => { e.stopPropagation(); handleAddCatalogToCart(product); }}
-                              className="w-full py-2 bg-indigo-600 hover:bg-indigo-500 text-white text-sm font-bold rounded-xl flex items-center justify-center gap-1.5 transition-colors cursor-pointer"
-                            >
-                              <CartIcon className="w-3 h-3" />
-                              Quick Add
-                            </button>
+                            {isTemplate ? (
+                              <button
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  if (preloadedDecalDataUrl) {
+                                    localStorage.setItem("apparel_preloaded_decal", preloadedDecalDataUrl);
+                                  } else {
+                                    localStorage.removeItem("apparel_preloaded_decal");
+                                  }
+                                  router.push(`/studio?product=${getSlug(product.name)}`);
+                                }}
+                                className="w-full py-2 bg-gradient-to-r from-indigo-500 to-purple-600 hover:from-indigo-600 hover:to-purple-700 text-white text-sm font-extrabold rounded-xl flex items-center justify-center gap-1.5 transition-all cursor-pointer shadow-md"
+                              >
+                                <Sparkles className="w-3.5 h-3.5 animate-pulse" />
+                                Design in 3D
+                              </button>
+                            ) : stockStatus === "out_of_stock" ? (
+                              <button
+                                disabled
+                                className="w-full py-2 bg-zinc-800 border border-zinc-700 text-zinc-500 text-sm font-bold rounded-xl flex items-center justify-center gap-1.5 cursor-not-allowed select-none"
+                              >
+                                <Lock className="w-3.5 h-3.5" />
+                                Out of Stock
+                              </button>
+                            ) : (
+                              <button
+                                onClick={(e) => { e.stopPropagation(); handleAddCatalogToCart(product); }}
+                                className="w-full py-2 bg-indigo-600 hover:bg-indigo-500 text-white text-sm font-bold rounded-xl flex items-center justify-center gap-1.5 transition-colors cursor-pointer"
+                              >
+                                <CartIcon className="w-3 h-3" />
+                                Quick Add
+                              </button>
+                            )}
                           </div>
                         </div>
 
@@ -1443,29 +2074,90 @@ export default function DashboardPage() {
                           <h3 className="font-bold text-xs text-zinc-200 group-hover:text-white transition-colors line-clamp-2 leading-snug">
                             {product.name}
                           </h3>
+                          {isTemplate && (
+                            <div className="flex items-center gap-1.5 text-[9px] font-black text-indigo-400 select-none bg-indigo-950/20 border border-indigo-900/30 px-2 py-1 rounded-lg w-fit mt-0.5 uppercase tracking-wider">
+                              <Sparkles className="w-2.5 h-2.5 text-indigo-400 animate-pulse shrink-0" />
+                              <span>
+                                {product.name.toLowerCase().includes("jersey")
+                                  ? "Custom Name & Number"
+                                  : "3D Decals & Fabric Colors"}
+                              </span>
+                            </div>
+                          )}
+                          {product.averageRating !== null && product.averageRating !== undefined && (
+                            <div className="flex items-center gap-1 mt-0.5 select-none">
+                              <div className="flex items-center">
+                                {[1, 2, 3, 4, 5].map((star) => {
+                                  const isFilled = star <= Math.round(product.averageRating);
+                                  return (
+                                    <svg
+                                      key={star}
+                                      className={`w-3 h-3 ${isFilled ? "text-amber-400 fill-amber-400" : "text-zinc-750 fill-transparent"}`}
+                                      viewBox="0 0 24 24"
+                                    >
+                                      <path d="M12 17.27L18.18 21l-1.64-7.03L22 9.24l-7.19-.61L12 2 9.19 8.63 2 9.24l5.46 4.73L5.82 21z" />
+                                    </svg>
+                                  );
+                                })}
+                              </div>
+                              <span className="text-[10px] text-zinc-500 font-black font-mono leading-none">
+                                {Number(product.averageRating).toFixed(1)}
+                              </span>
+                            </div>
+                          )}
                           <div className="flex items-center justify-between mt-auto pt-1">
-                            <span className="text-sm font-black text-indigo-400">
-                              ₹{product.price ? product.price.toLocaleString('en-IN') : "3,999"}
-                            </span>
-                            <span className="text-xs text-emerald-500 font-bold">Free Ship</span>
+                            {activeOffersMap[product.id] ? (
+                              <div className="flex items-baseline gap-2">
+                                <span className="text-sm font-black text-rose-400">
+                                  ₹{Math.round(product.price * (1 - activeOffersMap[product.id].discount_percent / 100)).toLocaleString('en-IN')}
+                                </span>
+                                <span className="text-xs text-zinc-550 line-through font-bold">
+                                  ₹{product.price.toLocaleString('en-IN')}
+                                </span>
+                              </div>
+                            ) : (
+                              <span className="text-sm font-black text-indigo-400">
+                                ₹{product.price ? product.price.toLocaleString('en-IN') : "3,999"}
+                              </span>
+                            )}
                           </div>
                           <div className="grid grid-cols-2 gap-2 mt-1">
                             <Link
                               href={`/product/${product.id}`}
                               onClick={(e) => e.stopPropagation()}
-                              className="w-full py-2 bg-zinc-800/60 hover:bg-zinc-800 border border-zinc-700/40 hover:border-zinc-650 text-zinc-300 hover:text-white rounded-xl text-xs font-bold text-center transition-all flex items-center justify-center"
+                              className={`w-full py-2 bg-zinc-800/60 hover:bg-zinc-800 border border-zinc-700/40 hover:border-zinc-650 text-zinc-300 hover:text-white rounded-xl text-xs font-bold text-center transition-all flex items-center justify-center ${stockStatus === "out_of_stock" && !isTemplate ? "col-span-2" : ""}`}
                             >
                               Details
                             </Link>
-                            <button
-                              onClick={(e) => {
-                                e.stopPropagation();
-                                handleBuyNowClick(product);
-                              }}
-                              className="w-full py-2 bg-indigo-600 hover:bg-indigo-500 text-white rounded-xl text-xs font-bold text-center transition-all cursor-pointer flex items-center justify-center gap-0.5"
-                            >
-                              Buy Now
-                            </button>
+                            {isTemplate ? (
+                              <button
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  if (preloadedDecalDataUrl) {
+                                    localStorage.setItem("apparel_preloaded_decal", preloadedDecalDataUrl);
+                                  } else {
+                                    localStorage.removeItem("apparel_preloaded_decal");
+                                  }
+                                  router.push(`/studio?product=${getSlug(product.name)}`);
+                                }}
+                                className="w-full py-2 bg-gradient-to-r from-indigo-500 to-purple-650 hover:from-indigo-650 hover:to-purple-700 text-white rounded-xl text-xs font-bold text-center transition-all cursor-pointer flex items-center justify-center gap-1 shadow-md"
+                              >
+                                <Sparkles className="w-3 h-3 animate-pulse" />
+                                <span>Design</span>
+                              </button>
+                            ) : (
+                              stockStatus !== "out_of_stock" && (
+                                <button
+                                  onClick={(e) => {
+                                    e.stopPropagation();
+                                    handleBuyNowClick(product);
+                                  }}
+                                  className="w-full py-2 bg-indigo-600 hover:bg-indigo-500 text-white rounded-xl text-xs font-bold text-center transition-all cursor-pointer flex items-center justify-center gap-0.5"
+                                >
+                                  Buy Now
+                                </button>
+                              )
+                            )}
                           </div>
                         </div>
                       </div>
@@ -1576,7 +2268,7 @@ export default function DashboardPage() {
                         {/* Canvas Image frame */}
                         <div className="w-full aspect-[4/3] bg-zinc-950 border border-zinc-850 rounded-xl overflow-hidden relative mb-4.5 flex items-center justify-center group-hover:border-zinc-800 transition-all">
                           <img 
-                            src={product.texture_url} 
+                            src={getDisplayImage(product)} 
                             alt={product.name} 
                             className="w-full h-full object-cover opacity-65 group-hover:opacity-85 transition-opacity duration-300"
                             onError={(e) => {
@@ -1657,7 +2349,7 @@ export default function DashboardPage() {
                   >
                     <div className="relative w-full bg-zinc-950 overflow-hidden cursor-pointer" style={{ aspectRatio: '3/4' }} onClick={() => router.push(`/product/${product.id}`)}>
                       <img 
-                        src={product.texture_url} 
+                        src={getDisplayImage(product)} 
                         alt={product.name} 
                         className="absolute inset-0 w-full h-full object-cover opacity-90 group-hover:opacity-100 group-hover:scale-105 transition-all duration-500" 
                         onError={(e) => { e.target.style.display = 'none'; }}
@@ -2224,138 +2916,7 @@ export default function DashboardPage() {
         </div>
       )}
 
-      {/* Premium Floating Support Live Help Widget */}
-      <div className="fixed bottom-6 right-6 z-40">
-        {!showHelpChat ? (
-          <button
-            onClick={() => setShowHelpChat(true)}
-            className="w-12 h-12 bg-gradient-to-tr from-indigo-500 to-purple-600 hover:from-indigo-600 hover:to-purple-700 text-white rounded-full flex items-center justify-center shadow-xl shadow-indigo-600/20 hover:shadow-indigo-600/35 border border-indigo-400/20 active:scale-95 transition-all cursor-pointer"
-            title="Launch Thread 3D Help Desk"
-          >
-            <span className="text-lg">💬</span>
-          </button>
-        ) : (
-          <div className="w-80 h-[440px] bg-zinc-950 border border-zinc-900 rounded-2xl shadow-2xl flex flex-col justify-between overflow-hidden relative border-indigo-500/10 shadow-indigo-500/5 animate-in slide-in-from-bottom duration-200">
-            {/* Header */}
-            <div className="bg-zinc-900/60 border-b border-zinc-850 p-3 flex items-center justify-between">
-              <div className="flex items-center gap-2">
-                <span className="w-2 h-2 bg-emerald-500 rounded-full animate-pulse" />
-                <span className="font-extrabold text-sm text-white">Thread 3D Live Help</span>
-              </div>
-              <button 
-                onClick={() => setShowHelpChat(false)}
-                className="p-1 hover:bg-zinc-800 rounded text-zinc-500 hover:text-white transition-colors cursor-pointer"
-              >
-                <X className="w-3.5 h-3.5" />
-              </button>
-            </div>
-
-            {/* Chat message stream */}
-            <div className="flex-1 overflow-y-auto p-4 space-y-3 font-medium text-sm scrollbar-thin">
-              {chatMessages.map((m, idx) => (
-                <div key={idx} className={`flex flex-col ${m.sender === "user" ? "items-end" : "items-start"}`}>
-                  <div className={`p-2 rounded-xl max-w-[85%] leading-relaxed ${
-                    m.sender === "user" 
-                      ? "bg-indigo-600 text-white rounded-tr-none animate-in fade-in slide-in-from-right duration-100" 
-                      : "bg-zinc-900 text-zinc-300 border border-zinc-850 rounded-tl-none animate-in fade-in slide-in-from-left duration-150"
-                  }`}>
-                    {m.text}
-                  </div>
-                  {m.action && (
-                    <div className="mt-1.5 w-full max-w-[85%] animate-in fade-in slide-in-from-bottom-2 duration-200">
-                      {m.action.type === "track" && (
-                        <button
-                          type="button"
-                          onClick={() => {
-                            setSelectedTrackingOrder(m.action.order);
-                            let baseStep = 1;
-                            if (m.action.order.status === "delivered") baseStep = 4;
-                            else if (m.action.order.status === "shipped") baseStep = 3;
-                            setActiveShipmentCheckpointStep(baseStep);
-                          }}
-                          className="w-full bg-indigo-500/10 hover:bg-indigo-600 border border-indigo-500/20 text-indigo-300 hover:text-white text-[10px] font-bold uppercase tracking-wider py-2 px-3 rounded-lg transition-all cursor-pointer text-center"
-                        >
-                          🚚 Track Package Live
-                        </button>
-                      )}
-
-                      {m.action.type === "size_guide" && (
-                        <button
-                          type="button"
-                          onClick={() => setShowSizeGuide(true)}
-                          className="w-full bg-indigo-500/10 hover:bg-indigo-600 border border-indigo-500/20 text-indigo-300 hover:text-white text-[10px] font-bold uppercase tracking-wider py-2 px-3 rounded-lg transition-all cursor-pointer text-center"
-                        >
-                          📏 Open Size Guide Chart
-                        </button>
-                      )}
-                    </div>
-                  )}
-                  <span className="text-[7px] text-zinc-500 mt-1 select-none font-mono">{m.time}</span>
-                </div>
-              ))}
-              {isBotTyping && (
-                <div className="flex flex-col items-start animate-in fade-in duration-200">
-                  <div className="bg-zinc-900 text-zinc-400 border border-zinc-850 px-3 py-2 rounded-xl rounded-tl-none flex items-center gap-1 select-none">
-                    <span className="w-1.5 h-1.5 bg-zinc-400 rounded-full animate-bounce" style={{ animationDelay: '0ms' }} />
-                    <span className="w-1.5 h-1.5 bg-zinc-400 rounded-full animate-bounce" style={{ animationDelay: '150ms' }} />
-                    <span className="w-1.5 h-1.5 bg-zinc-400 rounded-full animate-bounce" style={{ animationDelay: '300ms' }} />
-                  </div>
-                </div>
-              )}
-              <div ref={chatEndRef} />
-            </div>
-
-            {/* Quick suggestion pills */}
-            <div className="flex gap-1.5 overflow-x-auto px-3 py-2 bg-zinc-950 border-t border-zinc-900/60 scrollbar-none select-none">
-              <button
-                type="button"
-                onClick={() => handleQuickActionClick("Track my orders")}
-                className="shrink-0 bg-zinc-900 hover:bg-zinc-850 border border-zinc-850 text-zinc-400 hover:text-white px-2 py-1 rounded-full text-[10px] font-bold cursor-pointer transition-colors"
-              >
-                🚚 Track Orders
-              </button>
-              <button
-                type="button"
-                onClick={() => handleQuickActionClick("Get promo code")}
-                className="shrink-0 bg-zinc-900 hover:bg-zinc-850 border border-zinc-850 text-zinc-400 hover:text-white px-2 py-1 rounded-full text-[10px] font-bold cursor-pointer transition-colors"
-              >
-                🎫 Promo Code
-              </button>
-              <button
-                type="button"
-                onClick={() => handleQuickActionClick("Size guide advice")}
-                className="shrink-0 bg-zinc-900 hover:bg-zinc-850 border border-zinc-850 text-zinc-400 hover:text-white px-2 py-1 rounded-full text-[10px] font-bold cursor-pointer transition-colors"
-              >
-                📏 Sizing
-              </button>
-              <button
-                type="button"
-                onClick={() => handleQuickActionClick("Custom design tips")}
-                className="shrink-0 bg-zinc-900 hover:bg-zinc-850 border border-zinc-850 text-zinc-400 hover:text-white px-2 py-1 rounded-full text-[10px] font-bold cursor-pointer transition-colors"
-              >
-                🎨 Design Tips
-              </button>
-            </div>
-
-            {/* Input Form */}
-            <form onSubmit={handleSendChatMessage} className="p-2 border-t border-zinc-900 bg-zinc-950/40 flex gap-1.5">
-              <input
-                type="text"
-                placeholder="Ask about shipping, sizing, decals..."
-                value={chatInput}
-                onChange={(e) => setChatInput(e.target.value)}
-                className="bg-zinc-900 border border-zinc-850 px-2.5 py-1.5 rounded-lg text-xs text-zinc-200 focus:outline-none focus:border-indigo-500 flex-1 placeholder:text-zinc-600"
-              />
-              <button
-                type="submit"
-                className="bg-indigo-600 hover:bg-indigo-500 text-white font-bold text-xs px-3 py-1.5 rounded-lg transition-colors cursor-pointer flex items-center justify-center shrink-0"
-              >
-                Send
-              </button>
-            </form>
-          </div>
-        )}
-      </div>
+      {/* Global chat widget is now rendered from layout.js via ChatWidget component */}
 
       {/* Floating Checkout Success Slide-in Toast Notice */}
       {activeToast && (
@@ -2408,7 +2969,7 @@ export default function DashboardPage() {
                 <div className="flex gap-4 items-center bg-zinc-900/60 p-4 rounded-2xl border border-zinc-850 mb-6">
                   <div className="w-16 h-20 bg-zinc-950 rounded-xl border border-zinc-800 overflow-hidden shrink-0">
                     <img
-                      src={checkoutProduct.texture_url}
+                      src={getDisplayImage(checkoutProduct)}
                       alt={checkoutProduct.name}
                       className="w-full h-full object-cover"
                     />
@@ -2416,7 +2977,18 @@ export default function DashboardPage() {
                   <div>
                     <h4 className="font-bold text-sm text-white leading-tight">{checkoutProduct.name}</h4>
                     <p className="text-xs text-zinc-500 mt-1 uppercase tracking-wider font-semibold">{checkoutProduct.category || "Streetwear"}</p>
-                    <p className="text-xs font-black text-indigo-400 mt-1">₹{(checkoutProduct.price || 3999).toLocaleString('en-IN')}</p>
+                    {activeOffersMap[checkoutProduct.id] ? (
+                      <div className="flex items-baseline gap-2 mt-1">
+                        <span className="text-xs font-black text-rose-400">
+                          ₹{Math.round(checkoutProduct.price * (1 - activeOffersMap[checkoutProduct.id].discount_percent / 100)).toLocaleString('en-IN')}
+                        </span>
+                        <span className="text-[10px] text-zinc-500 line-through font-bold">
+                          ₹{checkoutProduct.price.toLocaleString('en-IN')}
+                        </span>
+                      </div>
+                    ) : (
+                      <p className="text-xs font-black text-indigo-400 mt-1">₹{(checkoutProduct.price || 3999).toLocaleString('en-IN')}</p>
+                    )}
                   </div>
                 </div>
 
@@ -2456,7 +3028,10 @@ export default function DashboardPage() {
 
               {/* Invoice calculation breakdown */}
               {(() => {
-                const subtotal = checkoutProduct.price || 3999;
+                const offer = activeOffersMap[checkoutProduct.id];
+                const subtotal = offer 
+                  ? Math.round(checkoutProduct.price * (1 - offer.discount_percent / 100))
+                  : (checkoutProduct.price || 3999);
                 const discountAmount = checkoutAppliedDiscount > 0 ? (subtotal * (checkoutAppliedDiscount / 100)) : 0;
                 const shippingInfo = getShippingDetailsCheckout(checkoutZip);
                 const deliveryFee = shippingInfo.fee;
@@ -2466,7 +3041,12 @@ export default function DashboardPage() {
                   <div className="border-t border-zinc-850 pt-5 mt-6 space-y-3 font-mono text-xs">
                     <div className="flex justify-between text-zinc-550">
                       <span>Subtotal:</span>
-                      <span className="text-zinc-300 font-bold">₹{subtotal.toLocaleString('en-IN')}</span>
+                      <span className="text-zinc-300 font-bold">
+                        {offer && (
+                          <span className="text-[10px] text-rose-400/80 mr-2 font-medium">({offer.discount_percent}% Flash Sale)</span>
+                        )}
+                        ₹{subtotal.toLocaleString('en-IN')}
+                      </span>
                     </div>
                     {checkoutAppliedDiscount > 0 && (
                       <div className="flex justify-between text-emerald-500 font-bold">

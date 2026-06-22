@@ -10,6 +10,18 @@ import {
   Loader2
 } from "lucide-react";
 
+const getDisplayImage = (p) => {
+  if (!p) return "";
+  const isTemplate = p.is_template === true || !!p.glb_file_url || (p.category && (p.category.toLowerCase().trim() === "template" || p.category.toLowerCase().trim() === "custom-template" || p.category.toLowerCase().trim().startsWith("custom-"))) || (p.name && (p.name.toLowerCase().includes("template") || p.name.toLowerCase().includes("blank")));
+  if (isTemplate && p.gallery_urls) {
+    const urls = p.gallery_urls.includes(",") 
+      ? p.gallery_urls.split(",").map(u => u.trim()).filter(Boolean)
+      : [p.gallery_urls.trim()];
+    if (urls.length > 0) return urls[0];
+  }
+  return p.texture_url || "";
+};
+
 export default function WishlistDrawer({ isOpen, onClose }) {
   const [wishlistIds, setWishlistIds] = useState([]);
   const [localProducts, setLocalProducts] = useState([]);
@@ -37,7 +49,7 @@ export default function WishlistDrawer({ isOpen, onClose }) {
       // 3. Fetch Catalog Products from Supabase
       const { data } = await supabase
         .from("products")
-        .select("id, name, price, texture_url, category, glb_file_url");
+        .select("id, name, price, texture_url, category, glb_file_url, gallery_urls, is_template");
       if (data) {
         setCatalogProducts(data);
       }
@@ -63,7 +75,7 @@ export default function WishlistDrawer({ isOpen, onClose }) {
       name: isCustomDesign ? product.name : `${product.name} (Ready-to-Wear)`,
       baseTexture: product.texture_url,
       glbUrl: product.glb_file_url || null,
-      thumbnailUrl: product.texture_url,
+      thumbnailUrl: getDisplayImage(product),
       size: "M",
       quantity: 1,
       addedAt: new Date().toISOString(),
@@ -161,7 +173,7 @@ export default function WishlistDrawer({ isOpen, onClose }) {
                     {/* Thumbnail */}
                     <div className="w-18 h-18 bg-zinc-950 border border-zinc-850 rounded-lg overflow-hidden shrink-0 flex items-center justify-center relative">
                       <img 
-                        src={product.texture_url} 
+                        src={getDisplayImage(product)} 
                         alt={product.name} 
                         className="w-full h-full object-cover" 
                         onError={(e) => { e.target.style.display = 'none'; }}

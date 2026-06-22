@@ -1,0 +1,58 @@
+Created At: 2026-06-15T05:50:28Z
+Completed At: 2026-06-15T05:50:28Z
+File Path: `file:///e:/APP%203D/3d-apparel-studio/scratch/recovered_page_view.txt`
+Total Lines: 50
+Total Bytes: 3283
+Showing lines 1 to 50
+The following code has been modified to include a line number before every line, in the format: <line_number>: <original_line>. Please note that any changes targeting the original code should remove the line number, colon, and leading space.
+1: Created At: 2026-06-15T05:34:15Z
+2: Completed At: 2026-06-15T05:34:15Z
+3: File Path: `file:///E:/APP%203D/3d-apparel-studio/src/app/page.js`
+4: Total Lines: 1071
+5: Total Bytes: 51019
+6: Showing lines 260 to 300
+7: The following code has been modified to include a line number before every line, in the format: <line_number>: <original_line>. Please note that any changes targeting the original code should remove the line number, colon, and leading space.
+8: 260:         </div>
+9: 261:       </div>
+10: 262:     </div>
+11: 263:   );
+12: 264: }
+13: 265: 
+14: 266: export default function HomeLandingPage() {
+15: 267:   const containerRef = useRef(null);
+16: 268:   const [session, setSession] = useState(null);
+17: 269:   const [featuredProducts, setFeaturedProducts] = useState([]);
+18: 270:   const [loadingFeatured, setLoadingFeatured] = useState(true);
+19: 271:   const [designsCount, setDesignsCount] = useState(0);
+20: 272:   const [overlayColor, setOverlayColor] = useState("rgba(0,0,0,0)");
+21: 273:   const [announcementText, setAnnouncementText] = useState("⚡ NEXT-GEN 3D STUDIO COUTURE DROP LIVE · USE CODE THREAD3D FOR 20% OFF ⚡");
+22: 274:   
+23: 275:   // Carousel State
+24: 276:   const [currentSlide, setCurrentSlide] = useState(0);
+25: 277:   const slideInterval = useRef(null);
+26: 278: 
+27: 279:   // Dynamic Promotion Cards State & Default Seed Values
+28: 280:   const [promoCards, setPromoCards] = useState([
+29: 281:     { id: 1, badge: "Thread3D Originals", title: "Classic Boxy Tees", description: "Perfect drop-shoulder silhouettes tailored from 380 GSM certified organic cotton.", image_url: "/boxy_tee_promo.png", cta_text: "Explore Drop", cta_href: "/dashboard?category=t-shirt", accent_color: "indigo" },
+30: 282:     { id: 2, badge: "Anime Special Edition", title: "The Anime Zone", description: "Officially licensed subculture prints and glowing reflective patterns.", image_url: "/anime_streetwear_promo.png", cta_text: "Explore Drop", cta_href: "/dashboard?q=anime", accent_color: "purple" },
+31: 283:     { id: 3, badge: "Interactive Studio", title: "Create in 3D Customizer", description: "Upload your graphics, change base colors, adjust lighting and roughness properties live.", image_url: "/threejs_customizer_promo.png", cta_text: "Design Now", cta_href: "/studio", accent_color: "pink" },
+32: 284:     { id: 4, badge: "Premium Jackets", title: "Cozy Winterwear", description: "Heavy luxury fleece garments, utility jacket shells, and oversized joggers.", image_url: "/winter_jacket_promo.png", cta_text: "Explore Drop", cta_href: "/dashboard?category=jacket", accent_color: "emerald" }
+33: 285:   ]);
+34: 286: 
+35: 287:   const colorMap = {
+36: 288:     indigo: {
+37: 289:       badge: "text-indigo-400",
+38: 290:       accentGlow: "bg-indigo-500/10",
+39: 291:       hoverGlow: "group-hover:bg-indigo-950/20",
+40: 292:       btnText: "group-hover:text-indigo-400",
+41: 293:       borderHover: "group-hover:border-indigo-500/40"
+42: 294:     },
+43: 295:     purple: {
+44: 296:       badge: "text-purple-400",
+45: 297:       accentGlow: "bg-purple-500/10",
+46: 298:       hoverGlow: "group-hover:bg-purple-950/20",
+47: 299:       btnText: "group-hover:text-purple-400",
+48: 300:       borderHover: "group-hover:border-purple-500/40"
+49: The above content does NOT show the entire file contents. If you need to view any lines of the file which were not shown to complete your task, call this tool again to view those lines.
+50: 
+The above content shows the entire, complete file contents of the requested file.

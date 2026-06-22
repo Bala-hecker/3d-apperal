@@ -28,7 +28,7 @@ function getShippingFee(zip) {
 export async function POST(request) {
   try {
     const body = await request.json();
-    const { items, shippingDetails, couponCode } = body;
+    const { items, shippingDetails, couponCode, isDesignerConsultation } = body;
 
     if (!items || !Array.isArray(items) || items.length === 0) {
       return Response.json({ error: "Cart items are required" }, { status: 400 });
@@ -67,10 +67,68 @@ export async function POST(request) {
       priceMap[p.id] = parseFloat(p.price) || 3999;
     });
 
+    // Fetch active flash offer & designer fee settings from storefront_settings
+    let activeOffer = null;
+    let dbDesignerFee = 500;
+    try {
+      const { data: offerData, error } = await supabase
+        .from("storefront_settings")
+        .select("offer_product_id, offer_discount_percent, offer_ends_at, designer_fee")
+        .eq("id", "default")
+        .maybeSingle();
+        
+      if (!error && offerData) {
+        if (offerData.offer_product_id && offerData.offer_ends_at) {
+          const endsAt = new Date(offerData.offer_ends_at);
+          if (endsAt > new Date() && offerData.offer_discount_percent > 0) {
+            activeOffer = {
+              productId: offerData.offer_product_id,
+              discountPercent: offerData.offer_discount_percent
+            };
+          }
+        }
+        if (offerData.designer_fee !== undefined && offerData.designer_fee !== null) {
+          dbDesignerFee = offerData.designer_fee;
+        }
+      } else if (error) {
+        // Fallback: query flash offer columns only
+        console.warn("storefront_settings query failed, trying fallback...", error.message);
+        const { data: fallbackData } = await supabase
+          .from("storefront_settings")
+          .select("offer_product_id, offer_discount_percent, offer_ends_at")
+          .eq("id", "default")
+          .maybeSingle();
+        
+        if (fallbackData && fallbackData.offer_product_id && fallbackData.offer_ends_at) {
+          const endsAt = new Date(fallbackData.offer_ends_at);
+          if (endsAt > new Date() && fallbackData.offer_discount_percent > 0) {
+            activeOffer = {
+              productId: fallbackData.offer_product_id,
+              discountPercent: fallbackData.offer_discount_percent
+            };
+          }
+        }
+      }
+    } catch (err) {
+      console.warn("Could not query storefront settings schema:", err.message);
+    }
+
     let subtotal = 0;
     items.forEach(item => {
       // Fallback to item price if product details aren't in Supabase (e.g. customized studio items draft)
-      const unitPrice = priceMap[item.productId] !== undefined ? priceMap[item.productId] : (parseFloat(item.price) || 3999);
+      let unitPrice = priceMap[item.productId] !== undefined ? priceMap[item.productId] : (parseFloat(item.price) || 3999);
+      
+      // Override price for designer consultation
+      if (isDesignerConsultation && item.id === "designer_consultation") {
+        unitPrice = dbDesignerFee;
+      } else {
+        // Apply active flash offer discount if applicable (skip for designer consultation)
+        if (activeOffer && activeOffer.productId === item.productId) {
+          const discountAmt = Math.round(unitPrice * (activeOffer.discountPercent / 100));
+          unitPrice = Math.max(0, unitPrice - discountAmt);
+        }
+      }
+      
       subtotal += unitPrice * item.quantity;
     });
 
@@ -106,7 +164,7 @@ export async function POST(request) {
             const { data: existingGuestOrders } = await supabase
               .from("orders")
               .select("id")
-              .eq("shipping_details->>email", cleanEmail)
+              .eq("customer_email", cleanEmail)
               .neq("status", "cancelled")
               .limit(1);
             if (existingGuestOrders && existingGuestOrders.length > 0) {
@@ -127,33 +185,91 @@ export async function POST(request) {
     }
     const discountAmount = subtotal * (discountPercent / 100);
 
-    // 4. Re-calculate shipping fee
+    // 4. Re-calculate shipping fee based on delivery ZIP code
     const deliveryFee = getShippingFee(shippingDetails.zip);
 
     // 5. Final total
     const finalTotalAmount = Math.max(0, subtotal - discountAmount + deliveryFee);
 
     // 6. Check Razorpay Settings are active
-    if (settingsError || !settings || !settings.enabled) {
-      return Response.json({ error: "Razorpay payment gateway is not enabled. Please configure and enable it in the Admin Dashboard Settings." }, { status: 400 });
+    const isRazorpayConfigured = !settingsError && settings && settings.enabled && settings.key_id && settings.key_secret;
+    const isMockModeEnabled = settings?.mock_mode_enabled === true;
+
+    if (!isRazorpayConfigured) {
+      // If Razorpay is NOT configured, check if Mock Mode is enabled by admin
+      if (!isMockModeEnabled) {
+        return Response.json({ 
+          error: "Payment failed. Please try again later." 
+        }, { status: 400 });
+      }
+
+      // ============ MOCK MODE FLOW ============
+      if (finalTotalAmount <= 0) {
+        return Response.json({ error: "Order total must be greater than zero." }, { status: 400 });
+      }
+
+      // Create pending order in Supabase with mock gateway mapped to actual database columns
+      const mockOrderPayload = {
+        user_id: body.userId || null,
+        customer_name: shippingDetails.name,
+        customer_email: shippingDetails.email,
+        customer_phone: shippingDetails.phone,
+        shipping_address: {
+          address: shippingDetails.address,
+          city: shippingDetails.city,
+          state: shippingDetails.state,
+          zip: shippingDetails.zip,
+          coupon_code: code || null,
+          payment_details: {
+            razorpay_order_id: `mock_order_${Date.now()}`,
+            razorpay_payment_id: null,
+            razorpay_signature: null
+          }
+        },
+        items: items,
+        total_amount: finalTotalAmount,
+        status: "pending",
+        payment_gateway: "mock_test"
+      };
+
+      const { data: mockDbOrder, error: mockDbErr } = await supabase
+        .from("orders")
+        .insert([mockOrderPayload])
+        .select("id")
+        .single();
+
+      if (mockDbErr || !mockDbOrder) {
+        console.error("Failed to create mock order:", mockDbErr);
+        return Response.json({ error: "Failed to initiate mock order. Please try again." }, { status: 500 });
+      }
+
+      return Response.json({
+        success: true,
+        isMockMode: true,
+        db_order_id: mockDbOrder.id,
+        order_id: `mock_order_${mockDbOrder.id}`,
+        amount: Math.round(finalTotalAmount * 100),
+        currency: "INR",
+        calculated_total: finalTotalAmount
+      });
     }
 
-    if (!settings.key_id || !settings.key_secret) {
-      return Response.json({ error: "Razorpay credentials are not fully configured in the Admin settings." }, { status: 500 });
-    }
-
+    // ============ LIVE RAZORPAY FLOW ============
     if (finalTotalAmount <= 0) {
       return Response.json({ error: "Order total must be greater than zero." }, { status: 400 });
     }
 
-     // A. Pre-create pending order in Supabase
+    // A. Pre-create pending order in Supabase mapped to actual database columns
     const pendingOrderPayload = {
       user_id: body.userId || null,
-      items: items,
-      total_amount: finalTotalAmount,
-      status: "pending",
-      shipping_details: {
-        ...shippingDetails,
+      customer_name: shippingDetails.name,
+      customer_email: shippingDetails.email,
+      customer_phone: shippingDetails.phone,
+      shipping_address: {
+        address: shippingDetails.address,
+        city: shippingDetails.city,
+        state: shippingDetails.state,
+        zip: shippingDetails.zip,
         coupon_code: code || null,
         payment_details: {
           razorpay_order_id: null,
@@ -161,6 +277,9 @@ export async function POST(request) {
           razorpay_signature: null
         }
       },
+      items: items,
+      total_amount: finalTotalAmount,
+      status: "pending",
       payment_gateway: "razorpay"
     };
 
@@ -196,8 +315,11 @@ export async function POST(request) {
     const { error: updateErr } = await supabase
       .from("orders")
       .update({
-        shipping_details: {
-          ...shippingDetails,
+        shipping_address: {
+          address: shippingDetails.address,
+          city: shippingDetails.city,
+          state: shippingDetails.state,
+          zip: shippingDetails.zip,
           coupon_code: code || null,
           payment_details: {
             razorpay_order_id: rzpOrder.id,
@@ -214,6 +336,7 @@ export async function POST(request) {
 
     return Response.json({
       success: true,
+      isMockMode: false,
       key_id: settings.key_id.trim(),
       order_id: rzpOrder.id,
       db_order_id: dbOrder.id,

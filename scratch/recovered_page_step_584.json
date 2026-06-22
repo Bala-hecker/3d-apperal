@@ -1,0 +1,15 @@
+{
+  "name": "replace_file_content",
+  "args": {
+    "AllowMultiple": "false",
+    "Description": "\"Added check for the storefront_drops table existence inside the checkDatabaseSchema verification function.\"",
+    "EndLine": "1970",
+    "Instruction": "\"Add storefront_drops table existence check to checkDatabaseSchema\"",
+    "ReplacementContent": "\"    try {\\n      const { error } = await supabase.from(\\\"categories\\\").select(\\\"image_url\\\").limit(1);\\n      if (error && (error.message.includes(\\\"column\\\") || error.code === \\\"PGRST205\\\" || error.code === \\\"42703\\\")) {\\n        mismatches.push(\\\"Missing the 'image_url' column in your 'categories' table. Run schema.sql SQL command to fix.\\\");\\n      }\\n    } catch (e) {\\n      mismatches.push(\\\"Missing the 'image_url' column in your 'categories' table. Run schema.sql SQL command to fix.\\\");\\n    }\\n\\n    try {\\n      const { error } = await supabase.from(\\\"storefront_drops\\\").select(\\\"id\\\").limit(1);\\n      if (error && (error.message.includes(\\\"does not exist\\\") || error.code === \\\"PGRST205\\\" || error.code === \\\"42P01\\\")) {\\n        mismatches.push(\\\"Missing the 'storefront_drops' table in your Supabase database schema. Run schema.sql SQL command to fix.\\\");\\n      }\\n    } catch (e) {\\n      mismatches.push(\\\"Missing the 'storefront_drops' table in your Supabase database schema. Run schema.sql SQL command to fix.\\\");\\n    }\\n\\n    setDbMismatches(mismatches);\\n  };\"",
+    "StartLine": "1959",
+    "TargetContent": "\"    try {\\n      const { error } = await supabase.from(\\\"categories\\\").select(\\\"image_url\\\").limit(1);\\n      if (error && (error.message.includes(\\\"column\\\") || error.code === \\\"PGRST205\\\" || error.code === \\\"42703\\\")) {\\n        mismatches.push(\\\"Missing the 'image_url' column in your 'categories' table. Run schema.sql SQL command to fix.\\\");\\n      }\\n    } catch (e) {\\n      mismatches.push(\\\"Missing the 'image_url' column in your 'categories' table. Run schema.sql SQL command to fix.\\\");\\n    }\\n\\n    setDbMismatches(mismatches);\\n  };\"",
+    "TargetFile": "\"e:\\\\APP 3D\\\\3d-apparel-studio\\\\src\\\\app\\\\admin\\\\page.js\"",
+    "toolAction": "\"Adding database schema check for storefront_drops\"",
+    "toolSummary": "\"Edit admin/page.js\""
+  }
+}

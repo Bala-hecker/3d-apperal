@@ -64,6 +64,17 @@ const isTemplateProduct = (p) => {
   return false;
 };
 
+const getDisplayImage = (p) => {
+  if (!p) return "";
+  if (isTemplateProduct(p) && p.gallery_urls) {
+    const urls = p.gallery_urls.includes(",") 
+      ? p.gallery_urls.split(",").map(u => u.trim()).filter(Boolean)
+      : [p.gallery_urls.trim()];
+    if (urls.length > 0) return urls[0];
+  }
+  return p.texture_url || "";
+};
+
 const BASE_FAQS = [
   { id: "base_1", question: "Can I customize the color overlay or upload logos on this product?", answer: "No, this is a ready-to-wear pre-designed catalog item. For custom decals and 3D color mapping, head to our 3D Design Studio tab." },
   { id: "base_2", question: "What specific fabric structure does this use?", answer: "High-density ringspun organic cotton (380 GSM). Premium double-knitted draping structure that fits flat with minimal wrinkles." },
@@ -136,7 +147,6 @@ export default function ProductDetailPage({ params }) {
   }, [showCheckoutModal]);
 
   const [hasPurchased, setHasPurchased] = useState(false);
-  const [simulationMode, setSimulationMode] = useState(false);
 
   const [isHovering, setIsHovering] = useState(false);
   const [zoomPos, setZoomPos] = useState({ x: 0, y: 0 });
@@ -234,6 +244,115 @@ export default function ProductDetailPage({ params }) {
     }
   }, [productId]);
 
+  const [activeFlashOffer, setActiveFlashOffer] = useState(null);
+  const [flashOfferTimeLeft, setFlashOfferTimeLeft] = useState("");
+
+  // Load storefront settings / flash offer info on mount/productId update
+  useEffect(() => {
+    if (!productId) return;
+    const fetchFlashOffer = async () => {
+      try {
+        const res = await fetch("/api/announcement");
+        const data = await res.json();
+        if (res.ok && data) {
+          const now = new Date();
+          
+          // 1. Process multi-offer list
+          if (Array.isArray(data.flash_offers_list)) {
+            const matchedOffer = data.flash_offers_list.find(
+              o => o.product_id === productId && o.ends_at && new Date(o.ends_at) > now
+            );
+            if (matchedOffer) {
+              setActiveFlashOffer({
+                offer_product_id: matchedOffer.product_id,
+                offer_discount_percent: Number(matchedOffer.discount_percent),
+                offer_ends_at: matchedOffer.ends_at
+              });
+              return;
+            }
+          }
+          
+          // 2. Legacy fallback
+          if (data.offer_product_id === productId && data.offer_ends_at) {
+            const difference = +new Date(data.offer_ends_at) - now;
+            if (difference > 0) {
+              setActiveFlashOffer(data);
+            }
+          }
+        } else {
+          applyLocalOfferFallback();
+        }
+      } catch (err) {
+        console.warn("Could not load storefront settings for flash offer:", err);
+        applyLocalOfferFallback();
+      }
+    };
+
+    const applyLocalOfferFallback = () => {
+      try {
+        const saved = localStorage.getItem("apparel_storefront_settings_local");
+        if (saved) {
+          const parsed = JSON.parse(saved);
+          const now = new Date();
+          
+          if (Array.isArray(parsed.flash_offers_list)) {
+            const matchedOffer = parsed.flash_offers_list.find(
+              o => o.product_id === productId && o.ends_at && new Date(o.ends_at) > now
+            );
+            if (matchedOffer) {
+              setActiveFlashOffer({
+                offer_product_id: matchedOffer.product_id,
+                offer_discount_percent: Number(matchedOffer.discount_percent),
+                offer_ends_at: matchedOffer.ends_at
+              });
+              return;
+            }
+          }
+          
+          if (parsed.offer_product_id === productId && parsed.offer_ends_at) {
+            const difference = +new Date(parsed.offer_ends_at) - now;
+            if (difference > 0) {
+              setActiveFlashOffer(parsed);
+            }
+          }
+        }
+      } catch (e) {
+        console.error("Local offer details fallback failed:", e);
+      }
+    };
+
+    fetchFlashOffer();
+  }, [productId]);
+
+  // Flash Offer countdown ticker
+  useEffect(() => {
+    if (!activeFlashOffer || !activeFlashOffer.offer_ends_at) {
+      setFlashOfferTimeLeft("");
+      return;
+    }
+    const updateCountdown = () => {
+      const difference = new Date(activeFlashOffer.offer_ends_at) - new Date();
+      if (difference <= 0) {
+        setFlashOfferTimeLeft("Expired");
+        setActiveFlashOffer(null);
+        return;
+      }
+      const totalSeconds = Math.floor(difference / 1000);
+      const hours = Math.floor(totalSeconds / 3600);
+      const minutes = Math.floor((totalSeconds % 3600) / 60);
+      const seconds = totalSeconds % 60;
+
+      if (hours > 0) {
+        setFlashOfferTimeLeft(`${hours}:${minutes.toString().padStart(2, "0")}:${seconds.toString().padStart(2, "0")}`);
+      } else {
+        setFlashOfferTimeLeft(`${minutes.toString().padStart(2, "0")}:${seconds.toString().padStart(2, "0")}`);
+      }
+    };
+    updateCountdown();
+    const interval = setInterval(updateCountdown, 1000);
+    return () => clearInterval(interval);
+  }, [activeFlashOffer]);
+
   const [reviews, setReviews] = useState([]);
   const [reviewerName, setReviewerName] = useState("");
   const [reviewRating, setReviewRating] = useState(5);
@@ -315,11 +434,12 @@ export default function ProductDetailPage({ params }) {
           const dbAllowName = data.allow_name !== undefined && data.allow_name !== null ? data.allow_name : null;
           const dbAllowNumber = data.allow_number !== undefined && data.allow_number !== null ? data.allow_number : null;
           const dbStockStatus = data.stock_status || null;
+          const rawStockLocal = typeof window !== "undefined" ? localStorage.getItem(`apparel_stock_${productId}`) : null;
 
           const pers = parseDescriptionPersonalization(data.description);
           const enableName = dbAllowName !== null ? dbAllowName : pers.allowName;
           const enableNumber = dbAllowNumber !== null ? dbAllowNumber : pers.allowNumber;
-          const currentStock = dbStockStatus !== null ? dbStockStatus : (pers.stockStatus || "in_stock");
+          const currentStock = rawStockLocal || dbStockStatus || pers.stockStatus || "in_stock";
 
           setAllowPersonalization(enableName || enableNumber);
           setAllowNamePersonalization(enableName);
@@ -376,11 +496,12 @@ export default function ProductDetailPage({ params }) {
           const dbAllowName = localProduct.allow_name !== undefined && localProduct.allow_name !== null ? localProduct.allow_name : null;
           const dbAllowNumber = localProduct.allow_number !== undefined && localProduct.allow_number !== null ? localProduct.allow_number : null;
           const dbStockStatus = localProduct.stock_status || null;
+          const rawStockLocal = typeof window !== "undefined" ? localStorage.getItem(`apparel_stock_${productId}`) : null;
 
           const pers = parseDescriptionPersonalization(localProduct.description);
           const enableName = dbAllowName !== null ? dbAllowName : pers.allowName;
           const enableNumber = dbAllowNumber !== null ? dbAllowNumber : pers.allowNumber;
-          const currentStock = dbStockStatus !== null ? dbStockStatus : (pers.stockStatus || "in_stock");
+          const currentStock = rawStockLocal || dbStockStatus || pers.stockStatus || "in_stock";
 
           setAllowPersonalization(enableName || enableNumber);
           setAllowNamePersonalization(enableName);
@@ -597,21 +718,30 @@ export default function ProductDetailPage({ params }) {
 
   const getGalleryUrls = () => {
     if (!product) return [];
-    const baseList = [product.texture_url];
+    const isTP = isTemplateProduct(product);
+    let galleryList = [];
     if (product.gallery_urls) {
-      let additional = [];
       if (product.gallery_urls.startsWith("data:image")) {
-        additional = [product.gallery_urls];
+        galleryList = [product.gallery_urls];
       } else {
-        additional = product.gallery_urls.split(",").map(url => url.trim()).filter(Boolean);
+        galleryList = product.gallery_urls.split(",").map(url => url.trim()).filter(Boolean);
       }
-      additional.forEach(url => {
+    }
+    if (isTP) {
+      if (galleryList.length > 0) {
+        return galleryList;
+      } else {
+        return [product.texture_url];
+      }
+    } else {
+      const baseList = [product.texture_url];
+      galleryList.forEach(url => {
         if (!baseList.includes(url)) {
           baseList.push(url);
         }
       });
+      return baseList;
     }
-    return baseList;
   };
 
   const images = getGalleryUrls();
@@ -692,6 +822,13 @@ export default function ProductDetailPage({ params }) {
 
   const handleAddToCart = async () => {
     if (!product) return;
+    if (stockStatus === "out_of_stock") {
+      setActiveToast({
+        title: "⚠️ Product Out of Stock",
+        message: "This product is currently out of stock and cannot be added to bag."
+      });
+      return;
+    }
     const { data: { session } } = await supabase.auth.getSession();
     if (!session) {
       router.push("/auth");
@@ -722,11 +859,16 @@ export default function ProductDetailPage({ params }) {
     const itemId = `cart_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
     const finalCustomName = enableCustomName ? (customName.trim() || null) : null;
     const finalCustomNumber = enableCustomNumber ? (customNumber.trim() || null) : null;
+    const originalPrice = product.price || 3999;
+    const finalPrice = activeFlashOffer 
+      ? Math.round(originalPrice * (1 - activeFlashOffer.offer_discount_percent / 100))
+      : originalPrice;
+
     const cartItem = {
       id: itemId, productId: product.id,
       name: `${product.name} (Ready-to-Wear)`,
-      baseTexture: product.texture_url, glbUrl: product.glb_file_url, thumbnailUrl: product.texture_url,
-      size: selectedSize, quantity, addedAt: new Date().toISOString(), price: product.price || 3999, fabric: "cotton",
+      baseTexture: product.texture_url, glbUrl: product.glb_file_url, thumbnailUrl: getDisplayImage(product),
+      size: selectedSize, quantity, addedAt: new Date().toISOString(), price: finalPrice, fabric: "cotton",
       customName: finalCustomName,
       customNumber: finalCustomNumber
     };
@@ -893,23 +1035,28 @@ export default function ProductDetailPage({ params }) {
     const finalCustomName = enableCustomName ? (customName.trim() || null) : null;
     const finalCustomNumber = enableCustomNumber ? (customNumber.trim() || null) : null;
 
+    const originalPrice = product.price || 3999;
+    const finalPrice = activeFlashOffer 
+      ? Math.round(originalPrice * (1 - activeFlashOffer.offer_discount_percent / 100))
+      : originalPrice;
+
     const cartItem = {
       id: `checkout_${Date.now()}`,
       productId: product.id,
       name: `${product.name} (Premium Organic Cotton)`,
       baseTexture: product.texture_url,
       glbUrl: product.glb_file_url,
-      thumbnailUrl: product.texture_url,
+      thumbnailUrl: getDisplayImage(product),
       size: selectedSize,
       quantity: quantity,
       addedAt: new Date().toISOString(),
-      price: product.price || 3999,
+      price: finalPrice,
       fabric: "cotton",
       customName: finalCustomName,
       customNumber: finalCustomNumber
     };
 
-    const subtotal = (product.price || 3999) * quantity;
+    const subtotal = finalPrice * quantity;
     const discountAmount = checkoutAppliedDiscount > 0 ? (subtotal * (checkoutAppliedDiscount / 100)) : 0;
     const shippingInfo = getShippingDetailsCheckout(checkoutZip);
     const deliveryFee = shippingInfo.fee;
@@ -957,6 +1104,13 @@ export default function ProductDetailPage({ params }) {
   };
 
   const handleBuyNowClick = async () => {
+    if (stockStatus === "out_of_stock") {
+      setActiveToast({
+        title: "⚠️ Product Out of Stock",
+        message: "This product is currently out of stock and cannot be purchased."
+      });
+      return;
+    }
     const { data: { session: currentSession } } = await supabase.auth.getSession();
     if (!currentSession) {
       router.push("/auth");
@@ -1151,7 +1305,7 @@ export default function ProductDetailPage({ params }) {
     fetchRelated();
   }, [productId]);
 
-  const canSubmitReview = hasPurchased || simulationMode;
+  const canSubmitReview = hasPurchased;
 
   if (loadingProduct) return (
     <div className="min-h-screen bg-zinc-950 flex flex-col items-center justify-center text-white font-sans">
@@ -1175,7 +1329,7 @@ export default function ProductDetailPage({ params }) {
   );
 
   return (
-    <div className="min-h-screen bg-zinc-950 text-white font-sans pb-28 relative overflow-x-hidden">
+    <div className="min-h-screen bg-zinc-950 text-white font-sans pb-28 relative overflow-x-clip">
       
       {/* Ambient glows */}
       <div className="absolute top-0 left-1/4 w-[500px] h-[500px] bg-indigo-600/8 rounded-full blur-[140px] pointer-events-none -z-10" />
@@ -1207,23 +1361,46 @@ export default function ProductDetailPage({ params }) {
           <div className="fixed bottom-0 left-0 right-0 z-40 lg:hidden bg-zinc-950/95 border-t border-zinc-900 backdrop-blur-md px-4 py-3 flex items-center gap-3 select-none">
             <div className="flex-1 text-left min-w-0">
               <p className="text-xs font-extrabold text-white truncate">{product.name}</p>
-              <p className="text-indigo-400 font-black text-sm">₹{product.price ? product.price.toLocaleString('en-IN') : "3,999"}</p>
+              {activeFlashOffer ? (
+                <div className="flex items-baseline gap-1.5">
+                  <span className="text-rose-500 font-black text-sm">₹{Math.round(product.price * (1 - activeFlashOffer.offer_discount_percent / 100)).toLocaleString('en-IN')}</span>
+                  <span className="text-zinc-650 line-through font-bold text-xs">₹{product.price.toLocaleString('en-IN')}</span>
+                </div>
+              ) : (
+                <p className="text-indigo-400 font-black text-sm">₹{product.price ? product.price.toLocaleString('en-IN') : "3,999"}</p>
+              )}
             </div>
             <div className="flex gap-2">
-              <button
-                onClick={handleAddToCart}
-                disabled={isAdding || stockStatus === "out_of_stock"}
-                className={`px-3 py-2.5 text-zinc-300 hover:text-white font-bold text-xs rounded-xl border border-zinc-800 bg-zinc-900/40 cursor-pointer disabled:opacity-50 transition-all shrink-0 flex items-center gap-1 ${stockStatus === "out_of_stock" ? "bg-zinc-800 border border-zinc-700 text-zinc-500 cursor-not-allowed" : ""}`}
-              >
-                <span>Bag</span>
-              </button>
-              <button
-                onClick={handleBuyNowClick}
-                disabled={stockStatus === "out_of_stock"}
-                className={`px-4 py-2.5 text-white font-bold text-xs rounded-xl shadow-lg flex items-center gap-1 cursor-pointer disabled:opacity-50 transition-all shrink-0 ${stockStatus === "out_of_stock" ? "bg-zinc-850 border border-zinc-800 text-zinc-500 cursor-not-allowed" : "bg-gradient-to-r from-indigo-500 to-purple-600 hover:from-indigo-600 hover:to-purple-700"}`}
-              >
-                <span>Buy Now</span>
-              </button>
+              {isTemplateProduct(product) ? (
+                <button
+                  onClick={() => router.push(`/studio?product=${getSlug(product.name)}`)}
+                  className="px-4 py-2.5 text-white font-extrabold text-xs rounded-xl shadow-lg flex items-center gap-1.5 cursor-pointer transition-all shrink-0 bg-gradient-to-r from-indigo-500 to-purple-650 hover:from-indigo-650 hover:to-purple-700"
+                >
+                  <Sparkles className="w-3.5 h-3.5 animate-pulse" />
+                  <span>Design in 3D</span>
+                </button>
+              ) : stockStatus === "out_of_stock" ? (
+                <div className="px-4 py-2.5 bg-zinc-900 border border-zinc-800 text-zinc-500 font-extrabold text-xs rounded-xl flex items-center gap-1.5 cursor-not-allowed select-none">
+                  <Lock className="w-3.5 h-3.5 text-zinc-550" />
+                  <span>Out of Stock</span>
+                </div>
+              ) : (
+                <>
+                  <button
+                    onClick={handleAddToCart}
+                    disabled={isAdding}
+                    className="px-3 py-2.5 text-zinc-300 hover:text-white font-bold text-xs rounded-xl border border-zinc-800 bg-zinc-900/40 cursor-pointer transition-all shrink-0 flex items-center gap-1"
+                  >
+                    <span>Bag</span>
+                  </button>
+                  <button
+                    onClick={handleBuyNowClick}
+                    className="px-4 py-2.5 text-white font-bold text-xs rounded-xl shadow-lg flex items-center gap-1 cursor-pointer transition-all shrink-0 bg-gradient-to-r from-indigo-500 to-purple-600 hover:from-indigo-600 hover:to-purple-700"
+                  >
+                    <span>Buy Now</span>
+                  </button>
+                </>
+              )}
             </div>
           </div>
         </>
@@ -1237,14 +1414,6 @@ export default function ProductDetailPage({ params }) {
             <ArrowLeft className="w-3.5 h-3.5" />
             <span>Shop Catalog</span>
           </Link>
-          {process.env.NODE_ENV !== "production" && !hasPurchased && (
-            <button
-              onClick={() => setSimulationMode(!simulationMode)}
-              className={`text-xs font-extrabold px-3 py-1.5 rounded-xl border tracking-wider transition-all cursor-pointer flex items-center gap-1 ${simulationMode ? "bg-emerald-600/25 border-emerald-500/30 text-emerald-400" : "bg-zinc-900/60 border-zinc-800/80 text-zinc-500 hover:text-zinc-400"}`}
-            >
-              <span>⚡ Dev:{simulationMode ? " BUYER ACTIVE" : " OFF"}</span>
-            </button>
-          )}
         </div>
 
         {loadingProduct ? (
@@ -1426,9 +1595,15 @@ export default function ProductDetailPage({ params }) {
                       </span>
                     )}
                     {product.category && (
-                      <span className="inline-flex items-center gap-1 bg-indigo-500/10 border border-indigo-500/20 text-indigo-400 text-sm font-bold px-2.5 py-1 rounded-full uppercase tracking-widest select-none">
+                      <span className="inline-flex items-center gap-1 bg-indigo-500/10 border border-indigo-500/20 text-indigo-400 text-sm font-bold px-2.5 py-1 rounded-full uppercase tracking-widest select-none font-mono">
                         <Tag className="w-3 h-3" />
                         {product.category}
+                      </span>
+                    )}
+                    {(product.gender || (typeof window !== "undefined" && localStorage.getItem(`apparel_gender_${product.id}`))) && (
+                      <span className="inline-flex items-center gap-1 bg-purple-500/10 border border-purple-500/20 text-purple-400 text-sm font-bold px-2.5 py-1 rounded-full uppercase tracking-widest select-none font-mono">
+                        <Tag className="w-3 h-3" />
+                        {product.gender || (typeof window !== "undefined" && localStorage.getItem(`apparel_gender_${product.id}`))}
                       </span>
                     )}
                   </div>
@@ -1450,13 +1625,42 @@ export default function ProductDetailPage({ params }) {
                   </div>
                 </div>
 
+                {activeFlashOffer && (
+                  <div className="bg-gradient-to-r from-rose-950/60 to-pink-950/40 border border-rose-500/25 rounded-2xl p-4 flex items-center justify-between gap-4 select-none animate-pulse">
+                    <div className="space-y-1">
+                      <div className="flex items-center gap-1.5 text-[10px] font-black text-rose-400 tracking-wider uppercase">
+                        <span className="w-2 h-2 rounded-full bg-rose-500 animate-ping" />
+                        Flash Promo Active
+                      </div>
+                      <p className="text-xs text-zinc-350">
+                        Get <span className="text-rose-400 font-bold">{activeFlashOffer.offer_discount_percent}% off</span> this product instantly!
+                      </p>
+                    </div>
+                    <div className="text-right shrink-0">
+                      <span className="text-[9px] text-zinc-500 font-bold uppercase tracking-wider block">Ends In</span>
+                      <span className="text-base font-black text-rose-400 font-mono tracking-widest">{flashOfferTimeLeft || "..."}</span>
+                    </div>
+                  </div>
+                )}
+
                 {/* Price */}
                 <div className="bg-gradient-to-r from-zinc-900/60 to-zinc-900/30 border border-zinc-800 p-4 rounded-2xl">
                   <span className="text-sm text-zinc-500 font-bold uppercase tracking-wider">Price</span>
                   <div className="flex items-baseline gap-3 mt-1">
-                    <span className="text-3xl font-black text-indigo-400">
-                      ₹{product.price ? product.price.toLocaleString('en-IN') : "3,999"}
-                    </span>
+                    {activeFlashOffer ? (
+                      <>
+                        <span className="text-3xl font-black text-rose-500">
+                          ₹{Math.round(product.price * (1 - activeFlashOffer.offer_discount_percent / 100)).toLocaleString('en-IN')}
+                        </span>
+                        <span className="text-sm text-zinc-550 line-through font-bold">
+                          ₹{product.price.toLocaleString('en-IN')}
+                        </span>
+                      </>
+                    ) : (
+                      <span className="text-3xl font-black text-indigo-400">
+                        ₹{product.price ? product.price.toLocaleString('en-IN') : "3,999"}
+                      </span>
+                    )}
                     <span className="text-xs text-indigo-400 font-bold bg-indigo-500/10 border border-indigo-500/20 px-2.5 py-1 rounded-full uppercase tracking-wider">
                       Standard Delivery from ₹49
                     </span>
@@ -1557,31 +1761,44 @@ export default function ProductDetailPage({ params }) {
 
                 {/* Add to Cart + Wishlist */}
                 <div className="flex gap-3 hidden lg:flex">
-                  <button
-                    onClick={handleAddToCart}
-                    disabled={isAdding || stockStatus === "out_of_stock"}
-                    className={`flex-1 py-3.5 text-zinc-300 hover:text-white font-black text-sm rounded-2xl shadow-lg border border-zinc-800 hover:border-zinc-700 bg-zinc-900/40 active:scale-[0.99] transition-all flex items-center justify-center gap-2 cursor-pointer disabled:opacity-50 ${stockStatus === "out_of_stock" ? "bg-zinc-800 border border-zinc-700 text-zinc-500 cursor-not-allowed" : ""}`}
-                  >
-                    {stockStatus === "out_of_stock" ? (
-                      <>
-                        <Lock className="w-4 h-4" />
-                        <span>Out of Stock</span>
-                      </>
-                    ) : (
-                      <>
-                        <ShoppingBag className="w-4 h-4" />
-                        <span>{isAdding ? "Adding..." : "Add to Bag"}</span>
-                      </>
-                    )}
-                  </button>
-                  <button
-                    onClick={handleBuyNowClick}
-                    disabled={stockStatus === "out_of_stock"}
-                    className={`flex-1 py-3.5 text-white font-black text-sm rounded-2xl shadow-lg active:scale-[0.99] transition-all flex items-center justify-center gap-2 cursor-pointer disabled:opacity-50 ${stockStatus === "out_of_stock" ? "bg-zinc-850 border border-zinc-800 text-zinc-500 cursor-not-allowed" : "bg-gradient-to-r from-indigo-500 to-purple-600 hover:from-indigo-600 hover:to-purple-700 hover:shadow-indigo-500/25"}`}
-                  >
-                    <span>⚡</span>
-                    <span>Buy Now</span>
-                  </button>
+                  {isTemplateProduct(product) ? (
+                    <button
+                      onClick={() => router.push(`/studio?product=${getSlug(product.name)}`)}
+                      className="flex-1 py-3.5 text-white font-black text-sm rounded-2xl shadow-lg hover:shadow-indigo-500/25 active:scale-[0.99] transition-all flex items-center justify-center gap-2 cursor-pointer bg-gradient-to-r from-indigo-500 to-purple-650 hover:from-indigo-650 hover:to-purple-700"
+                    >
+                      <Sparkles className="w-4 h-4 animate-pulse" />
+                      <span>Design in 3D Customizer</span>
+                    </button>
+                  ) : (
+                    <>
+                      <button
+                        onClick={handleAddToCart}
+                        disabled={isAdding || stockStatus === "out_of_stock"}
+                        className={`flex-1 py-3.5 text-zinc-300 hover:text-white font-black text-sm rounded-2xl shadow-lg border border-zinc-850 bg-zinc-900/40 active:scale-[0.99] transition-all flex items-center justify-center gap-2 cursor-pointer disabled:opacity-50 ${stockStatus === "out_of_stock" ? "bg-zinc-900 border border-zinc-850 text-zinc-500 cursor-not-allowed" : ""}`}
+                      >
+                        {stockStatus === "out_of_stock" ? (
+                          <>
+                            <Lock className="w-4 h-4 text-zinc-650" />
+                            <span>Out of Stock</span>
+                          </>
+                        ) : (
+                          <>
+                            <ShoppingBag className="w-4 h-4" />
+                            <span>{isAdding ? "Adding..." : "Add to Bag"}</span>
+                          </>
+                        )}
+                      </button>
+                      {stockStatus !== "out_of_stock" && (
+                        <button
+                          onClick={handleBuyNowClick}
+                          className="flex-1 py-3.5 text-white font-black text-sm rounded-2xl shadow-lg active:scale-[0.99] transition-all flex items-center justify-center gap-2 cursor-pointer bg-gradient-to-r from-indigo-500 to-purple-600 hover:from-indigo-600 hover:to-purple-700 hover:shadow-indigo-500/25"
+                        >
+                          <span>⚡</span>
+                          <span>Buy Now</span>
+                        </button>
+                      )}
+                    </>
+                  )}
                   <button
                     onClick={toggleWishlist}
                     className={`p-3.5 rounded-2xl border transition-all cursor-pointer ${isWishlisted ? "bg-rose-500/10 border-rose-500/30 text-rose-400" : "bg-zinc-900/40 border-zinc-800 text-zinc-400 hover:border-rose-500/30 hover:text-rose-400"}`}
@@ -1590,6 +1807,17 @@ export default function ProductDetailPage({ params }) {
                     <Heart className={`w-5 h-5 ${isWishlisted ? "fill-rose-400" : ""}`} />
                   </button>
                 </div>
+
+                {(isTemplateProduct(product) || allowPersonalization) && (
+                  <button
+                    type="button"
+                    onClick={() => window.dispatchEvent(new CustomEvent("open-designer-chat"))}
+                    className="w-full mt-3 py-3 px-4 bg-emerald-500/10 hover:bg-emerald-500/15 border border-emerald-500/20 hover:border-emerald-500/30 text-emerald-400 font-bold text-xs rounded-2xl flex items-center justify-center gap-2 cursor-pointer transition-all active:scale-[0.99] select-none shadow-sm"
+                  >
+                    <span>🎨</span>
+                    <span>Having trouble designing? Contact our Designer</span>
+                  </button>
+                )}
 
                 {/* Dynamic Return Policy disclaimer under Action Row */}
                 {product && (
@@ -1742,7 +1970,7 @@ export default function ProductDetailPage({ params }) {
                       className="bg-zinc-900/25 border border-zinc-900 hover:border-zinc-700 rounded-2xl overflow-hidden cursor-pointer group transition-all hover:shadow-lg hover:shadow-zinc-950/50"
                     >
                       <div className="aspect-square bg-zinc-950 overflow-hidden">
-                        <img src={item.texture_url} alt={item.name}
+                        <img src={getDisplayImage(item)} alt={item.name}
                           className="w-full h-full object-cover opacity-75 group-hover:opacity-100 transition-all duration-300 group-hover:scale-105" />
                       </div>
                       <div className="p-3">
@@ -1911,12 +2139,6 @@ export default function ProductDetailPage({ params }) {
                       <Lock className="w-7 h-7 mx-auto text-zinc-600 mb-3" />
                       <h5 className="text-xs font-bold text-zinc-400 uppercase tracking-wider">Delivery Confirmation Required</h5>
                       <p className="text-sm text-zinc-500 max-w-sm mx-auto mt-2 leading-relaxed">Reviews are restricted to verified buyers after successful order delivery. Share your experience once your order arrives!</p>
-                      {process.env.NODE_ENV !== "production" && (
-                        <button onClick={() => setSimulationMode(true)}
-                          className="mt-4 px-4 py-1.5 bg-indigo-500/10 hover:bg-indigo-600 border border-indigo-500/20 text-indigo-400 hover:text-white rounded-xl text-xs font-extrabold uppercase tracking-wider transition-all cursor-pointer">
-                          ⚡ Dev: Enable Buyer Mode
-                        </button>
-                      )}
                     </div>
                   ) : (
                     <form onSubmit={handleSubmitReview} className="space-y-4">
@@ -2060,7 +2282,7 @@ export default function ProductDetailPage({ params }) {
                 <div className="flex gap-4 items-center bg-zinc-900/60 p-4 rounded-2xl border border-zinc-850 mb-6">
                   <div className="w-16 h-20 bg-zinc-950 rounded-xl border border-zinc-800 overflow-hidden shrink-0">
                     <img
-                      src={product.texture_url}
+                      src={getDisplayImage(product)}
                       alt={product.name}
                       className="w-full h-full object-cover"
                     />

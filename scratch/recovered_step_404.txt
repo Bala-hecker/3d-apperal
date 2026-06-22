@@ -1,0 +1,29 @@
+Created At: 2026-06-15T05:29:09Z
+Completed At: 2026-06-15T05:29:09Z
+File Path: `file:///E:/APP%203D/3d-apparel-studio/src/app/page.js`
+Total Lines: 967
+Total Bytes: 44606
+Showing lines 850 to 870
+The following code has been modified to include a line number before every line, in the format: <line_number>: <original_line>. Please note that any changes targeting the original code should remove the line number, colon, and leading space.
+850:               <div className="pt-6">
+851:                 <a 
+852:                   href="mailto:help@thread3d.com?subject=Atelier Concierge Request"
+853:                   className="w-full block text-center py-2.5 bg-zinc-900 hover:bg-zinc-800 border border-zinc-850 hover:border-zinc-750 text-white font-bold text-xs rounded-xl transition-colors cursor-pointer"
+854:                 >
+855:                   Contact Lead Operator
+856:                 </a>
+857:               </div>
+858:             </div>
+859: 
+860:           </div>
+861:         </div>
+862:       </section>
+863: 
+864:       {/* ====== DETAILED SITE TRUST BADGES ====== */}
+865:       <section className="py-12 border-t border-b border-zinc-900/60 bg-zinc-950/60">
+866:         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
+867:           <div className="grid grid-cols-2 md:grid-cols-4 gap-6 text-center">
+868:             <div className="flex flex-col items-center gap-2 group p-4 border border-transparent hover:border-zinc-900 rounded-2xl transition-all duration-300">
+869:               <div className="w-10 h-10 rounded-full bg-zinc-900 border border-zinc-800 flex items-center justify-center mb-1 group-hover:scale-110 transition-transform">
+870:                 <Truck className="w-5 h-5 text-indigo-400" />
+The above content does NOT show the entire file contents. If you need to view any lines of the file which were not shown to complete your task, call this tool again to view those lines.

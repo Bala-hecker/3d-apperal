@@ -24,6 +24,18 @@ import {
 import CartDrawer from "./CartDrawer";
 import WishlistDrawer from "./WishlistDrawer";
 
+const getDisplayImage = (p) => {
+  if (!p) return "";
+  const isTemplate = p.is_template === true || !!p.glb_file_url || (p.category && (p.category.toLowerCase().trim() === "template" || p.category.toLowerCase().trim() === "custom-template" || p.category.toLowerCase().trim().startsWith("custom-"))) || (p.name && (p.name.toLowerCase().includes("template") || p.name.toLowerCase().includes("blank")));
+  if (isTemplate && p.gallery_urls) {
+    const urls = p.gallery_urls.includes(",") 
+      ? p.gallery_urls.split(",").map(u => u.trim()).filter(Boolean)
+      : [p.gallery_urls.trim()];
+    if (urls.length > 0) return urls[0];
+  }
+  return p.texture_url || "";
+};
+
 const applyTheme = (themeName) => {
   if (typeof window === "undefined") return;
   
@@ -247,8 +259,8 @@ export default function Navbar({ children }) {
       try {
         const { data } = await supabase
           .from("products")
-          .select("id, name, price, texture_url, category, glb_file_url")
-          .ilike("name", `%${val}%`)
+          .select("id, name, price, texture_url, category, glb_file_url, description, gallery_urls, is_template")
+          .or(`name.ilike.%${val}%,description.ilike.%${val}%`)
           .limit(6);
         setSearchResults(data || []);
       } catch {
@@ -680,8 +692,8 @@ export default function Navbar({ children }) {
                       >
                         {/* Thumbnail */}
                         <div className="w-10 h-10 rounded-lg bg-zinc-800 border border-zinc-700 overflow-hidden shrink-0">
-                          {product.texture_url && (
-                            <img src={product.texture_url} alt={product.name}
+                          {getDisplayImage(product) && (
+                            <img src={getDisplayImage(product)} alt={product.name}
                               className="w-full h-full object-cover opacity-80 group-hover:opacity-100 transition-opacity"
                               onError={(e) => { e.target.style.display = "none"; }} />
                           )}
@@ -727,7 +739,7 @@ export default function Navbar({ children }) {
                           { label: "Shop All", href: "/dashboard", icon: <ShoppingBag className="w-3.5 h-3.5" /> },
                           { label: "3D Studio", href: "/studio", icon: <Sparkles className="w-3.5 h-3.5" /> },
                           { label: "Track Orders", href: "/dashboard?tab=tracking", icon: <Box className="w-3.5 h-3.5" /> },
-                          { label: "T-Shirts", href: "/dashboard?cat=t-shirt", icon: <Shirt className="w-3.5 h-3.5" /> },
+                          { label: "T-Shirts", href: "/dashboard?category=t-shirt", icon: <Shirt className="w-3.5 h-3.5" /> },
                         ].map(item => (
                           <Link key={item.href} href={item.href} onClick={closeSearch}
                             className="flex items-center gap-2 px-3 py-2.5 bg-zinc-800/60 hover:bg-zinc-800 border border-zinc-700/40 hover:border-zinc-600 rounded-xl text-xs text-zinc-300 hover:text-white font-medium transition-all cursor-pointer">

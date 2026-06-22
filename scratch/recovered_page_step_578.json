@@ -1,0 +1,19 @@
+{
+  "name": "replace_file_content",
+  "args": {
+    "AllowMultiple": "false",
+    "Description": "\"Implemented storefront drops fetching, saving (with file upload to product-assets storage bucket), and deleting operations.\"",
+    "EndLine": "1745",
+    "Instruction": "\"Add storefront drops fetching and editing logic\"",
+    "ReplacementContent": "\"    } finally {\\n      setSavingAnnouncement(false);\\n    }\\n  };\\n\\n  // Fetch dynamic storefront drops list from Supabase\\n  const fetchStorefrontDrops = async () => {\\n    setLoadingDrops(true);\\n    try {\\n      const { data, error } = await supabase\\n        .from(\\\"storefront_drops\\\")\\n        .select(\\\"*\\\")\\n        .order(\\\"display_order\\\", { ascending: true });\\n      if (error) throw error;\\n      if (data && data.length > 0) {\\n        setDropsList(data);\\n      } else {\\n        // Fallback defaults in case DB is empty\\n        setDropsList([\\n          { id: 1, title: 'Aero-Cyber Athletic Jersey', price: 4499, description: 'Designed for reflective cyber aesthetics. Tailored with custom synthetic performance micro-weave and high-density glow decals.', image_url: '/cyberpunk_jersey_drop.png', status: 'releasing_soon', target_date: new Date(Date.now() + 2 * 24 * 60 * 60 * 1000 + 4 * 60 * 60 * 1000).toISOString(), display_order: 0 },\\n          { id: 2, title: 'Minimalist French Terry Hoodie', price: 5999, description: 'Luxurious comfort tailored from heavyweight 380 GSM organic cotton. Detailed with clean stitching overlays and 3D puff embroidery.', image_url: '/fleece_hoodie_drop.png', status: 'in_production', target_date: new Date(Date.now() + 8 * 24 * 60 * 60 * 1000 + 12 * 60 * 60 * 1000).toISOString(), display_order: 1 },\\n          { id: 3, title: 'Genesis Classic Boxy Tee', price: 3999, description: 'Oversized street silhouettes tailored from 380 GSM organic jersey cotton. The signature drop that launched the Thread 3D studio.', image_url: '/boxy_tee_promo.png', status: 'sold_out', target_date: new Date(Date.now() - 10 * 24 * 60 * 60 * 1000).toISOString(), display_order: 2 }\\n        ]);\\n      }\\n    } catch (err) {\\n      console.warn(\\\"Could not fetch storefront drops from Supabase:\\\", err.message || err);\\n      // Fallback defaults in case Supabase query fails\\n      setDropsList([\\n        { id: 1, title: 'Aero-Cyber Athletic Jersey', price: 4499, description: 'Designed for reflective cyber\n<truncated 3841 bytes>",
+    "StartLine": "1739",
+    "TargetContent": "\"    } finally {\\n      setSavingAnnouncement(false);\\n    }\\n  };\"",
+    "TargetFile": "\"e:\\\\APP 3D\\\\3d-apparel-studio\\\\src\\\\app\\\\admin\\\\page.js\"",
+    "TargetLintErrorIds": "[]",
+    "TemplateContent": "null",
+    "toolAction": "\"Inserting storefront drops CRUD operations\"",
+    "toolSummary": "\"Edit admin/page.js\"",
+    "version": "null",
+    "versionKey": "null"
+  }
+}

@@ -1,0 +1,8 @@
+{
+  "step_index": 667,
+  "source": "MODEL",
+  "type": "VIEW_FILE",
+  "status": "DONE",
+  "created_at": "2026-06-15T05:42:32Z",
+  "content": "Created At: 2026-06-15T05:42:32Z\nCompleted At: 2026-06-15T05:42:33Z\nFile Path: `file:///e:/APP%203D/3d-apparel-studio/src/app/page.js`\nTotal Lines: 575\nTotal Bytes: 25246\nShowing lines 1 to 20\nThe following code has been modified to include a line number before every line, in the format: <line_number>: <original_line>. Please note that any changes targeting the original code should remove the line number, colon, and leading space.\n1: \"use client\";\r\n2: \r\n3: import React, { useState, useEffect, useRef } from \"react\";\r\n4: import Link from \"next/link\";\r\n5: import gsap from \"gsap\";\r\n6: import ScrollTrigger from \"gsap/ScrollTrigger\";\r\n7: import { useGSAP } from \"@gsap/react\";\r\n8: \r\n9: gsap.registerPlugin(ScrollTrigger, useGSAP);\r\n10: import { supabase } from \"@/lib/supabase\";\r\n11: import Navbar from \"@/components/Navbar\";\r\n12: import { \r\n13:   Sparkles, \r\n14:   Paintbrush, \r\n15:   Sliders, \r\n16:   ArrowRight, \r\n17:   ShoppingBag, \r\n18:   MousePointerClick,\r\n19:   Heart\r\n20: } from \"lucide-react\";\r\nThe above content does NOT show the entire file contents. If you need to view any lines of the file which were not shown to complete your task, call this tool again to view those lines.\n"
+}

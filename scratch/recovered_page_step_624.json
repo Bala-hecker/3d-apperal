@@ -1,0 +1,15 @@
+{
+  "name": "replace_file_content",
+  "args": {
+    "AllowMultiple": "false",
+    "Description": "\"Fixed a missing closing div in the invoice settings panel template.\"",
+    "EndLine": "6410",
+    "Instruction": "\"Add missing closing div to invoice settings panel\"",
+    "ReplacementContent": "\"                  </form>\\n                </div>\\n              </div>\\n            )}\"",
+    "StartLine": "6407",
+    "TargetContent": "\"                  </form>\\n                </div>\\n            )}\"",
+    "TargetFile": "\"e:\\\\APP 3D\\\\3d-apparel-studio\\\\src\\\\app\\\\admin\\\\page.js\"",
+    "toolAction": "\"Fixing invoice tab closing tags\"",
+    "toolSummary": "\"Edit admin/page.js\""
+  }
+}

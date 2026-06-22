@@ -1,0 +1,12 @@
+{
+  "AllowMultiple": "false",
+  "Description": "\"Hooked fetchStorefrontDrops into the getSession authentication success flow in admin page.js.\"",
+  "EndLine": "2873",
+  "Instruction": "\"Add fetchStorefrontDrops trigger to getSession success block\"",
+  "ReplacementContent": "\"          fetchAnnouncement();\\n          fetchHomepageBanners();\\n          fetchPromoCards();\\n          fetchStorefrontDrops();\\n        }\\n      }\\n    };\"",
+  "StartLine": "2868",
+  "TargetContent": "\"          fetchAnnouncement();\\n          fetchHomepageBanners();\\n          fetchPromoCards();\\n        }\\n      }\\n    };\"",
+  "TargetFile": "\"e:\\\\APP 3D\\\\3d-apparel-studio\\\\src\\\\app\\\\admin\\\\page.js\"",
+  "toolAction": "\"Hooking up fetchStorefrontDrops in mount block\"",
+  "toolSummary": "\"Edit admin/page.js\""
+}

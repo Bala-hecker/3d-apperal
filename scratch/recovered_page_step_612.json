@@ -1,0 +1,15 @@
+{
+  "name": "replace_file_content",
+  "args": {
+    "AllowMultiple": "false",
+    "Description": "\"Added the Drops Calendar button switcher option inside the storefront settings sub-tab header list.\"",
+    "EndLine": "5876",
+    "Instruction": "\"Add Drops Calendar button to sub-tab switcher\"",
+    "ReplacementContent": "\"              <button\\n                onClick={() => setStorefrontSubTab(\\\"invoice\\\")}\\n                className={`flex-1 text-center py-2 rounded text-xs font-bold uppercase tracking-wider transition-all cursor-pointer ${\\n                  storefrontSubTab === \\\"invoice\\\"\\n                    ? \\\"bg-indigo-600 text-white shadow\\\"\\n                    : \\\"text-zinc-500 hover:text-zinc-300\\\"\\n                }`}\\n              >\\n                Invoice Settings\\n              </button>\\n              <button\\n                onClick={() => setStorefrontSubTab(\\\"drops\\\")}\\n                className={`flex-1 text-center py-2 rounded text-xs font-bold uppercase tracking-wider transition-all cursor-pointer ${\\n                  storefrontSubTab === \\\"drops\\\"\\n                    ? \\\"bg-indigo-600 text-white shadow\\\"\\n                    : \\\"text-zinc-500 hover:text-zinc-300\\\"\\n                }`}\\n              >\\n                Drops Calendar\\n              </button>\\n            </div>\"",
+    "StartLine": "5866",
+    "TargetContent": "\"              <button\\n                onClick={() => setStorefrontSubTab(\\\"invoice\\\")}\\n                className={`flex-1 text-center py-2 rounded text-xs font-bold uppercase tracking-wider transition-all cursor-pointer ${\\n                  storefrontSubTab === \\\"invoice\\\"\\n                    ? \\\"bg-indigo-600 text-white shadow\\\"\\n                    : \\\"text-zinc-500 hover:text-zinc-300\\\"\\n                }`}\\n              >\\n                Invoice Settings\\n              </button>\\n            </div>\"",
+    "TargetFile": "\"e:\\\\APP 3D\\\\3d-apparel-studio\\\\src\\\\app\\\\admin\\\\page.js\"",
+    "toolAction": "\"Adding Drops Calendar sub-tab button\"",
+    "toolSummary": "\"Edit admin/page.js\""
+  }
+}

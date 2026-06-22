@@ -1,0 +1,15 @@
+{
+  "name": "replace_file_content",
+  "args": {
+    "AllowMultiple": "false",
+    "Description": "\"Fix duplicate </section> tag syntax error on homepage after drops calendar injection.\"",
+    "EndLine": "965",
+    "Instruction": "\"Remove the duplicated </section> tag at line 964.\"",
+    "ReplacementContent": "\"          </div>\\n        </div>\\n      </section>\"",
+    "StartLine": "961",
+    "TargetContent": "\"          </div>\\n        </div>\\n      </section>      </section>\"",
+    "TargetFile": "\"E:\\\\APP 3D\\\\3d-apparel-studio\\\\src\\\\app\\\\page.js\"",
+    "toolAction": "\"Fixing section tags in page.js\"",
+    "toolSummary": "\"Fix page.js syntax error\""
+  }
+}

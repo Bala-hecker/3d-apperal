@@ -1,0 +1,15 @@
+{
+  "name": "replace_file_content",
+  "args": {
+    "AllowMultiple": "false",
+    "Description": "\"Added state hooks for dropsList, loadingDrops, editingDrop, savingDrop, and dropFile under the storefront settings state declarations.\"",
+    "EndLine": "1065",
+    "Instruction": "\"Add storefront drops states to admin page state declarations\"",
+    "ReplacementContent": "\"  // Storefront Settings sub-tab\\n  const [storefrontSubTab, setStorefrontSubTab] = useState(\\\"banners\\\"); // \\\"banners\\\" | \\\"promo-cards\\\" | \\\"ticker\\\" | \\\"invoice\\\" | \\\"drops\\\"\\n\\n  // Homepage drops calendar state\\n  const [dropsList, setDropsList] = useState([]);\\n  const [loadingDrops, setLoadingDrops] = useState(false);\\n  const [editingDrop, setEditingDrop] = useState(null);\\n  const [savingDrop, setSavingDrop] = useState(false);\\n  const [dropFile, setDropFile] = useState(null);\"",
+    "StartLine": "1063",
+    "TargetContent": "\"  // Storefront Settings sub-tab\\n  const [storefrontSubTab, setStorefrontSubTab] = useState(\\\"banners\\\"); // \\\"banners\\\" | \\\"promo-cards\\\" | \\\"ticker\\\" | \\\"invoice\\\"\"",
+    "TargetFile": "\"e:\\\\APP 3D\\\\3d-apparel-studio\\\\src\\\\app\\\\admin\\\\page.js\"",
+    "toolAction": "\"Adding storefront drops states to admin page\"",
+    "toolSummary": "\"Edit admin/page.js\""
+  }
+}

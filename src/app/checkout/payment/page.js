@@ -23,6 +23,37 @@ export default function CheckoutPaymentPage() {
   const [paymentSuccess, setPaymentSuccess] = useState(false);
   const [userId, setUserId] = useState(null);
 
+  // Safe extraction of shipping details fields to handle legacy/test objects
+  const getDisplayDetails = () => {
+    const details = sessionData?.shippingDetails || {};
+    
+    const name = typeof details.name === "object" && details.name !== null
+      ? (details.name.name || JSON.stringify(details.name))
+      : (details.name || "Valued Customer");
+      
+    const phone = typeof details.phone === "object" && details.phone !== null
+      ? (details.phone.phone || JSON.stringify(details.phone))
+      : details.phone;
+      
+    let address = "";
+    let city = "";
+    let zip = "";
+    
+    if (details.address && typeof details.address === "object") {
+      address = details.address.address || "";
+      city = details.address.city || details.city || "";
+      zip = details.address.zip || details.zip || "";
+    } else {
+      address = details.address || "";
+      city = details.city || "";
+      zip = details.zip || "";
+    }
+    
+    return { name, phone, address, city, zip };
+  };
+
+  const { name: displayName, phone: displayPhone, address: displayAddress, city: displayCity, zip: displayZip } = getDisplayDetails();
+
   // 1. Retrieve checkout details from localStorage
   useEffect(() => {
     try {
@@ -93,8 +124,57 @@ export default function CheckoutPaymentPage() {
         return;
       }
 
-      const { key_id, order_id, amount, currency } = orderData;
+      const { key_id, order_id, amount, currency, isMockMode, db_order_id } = orderData;
 
+      // ============ MOCK MODE: Skip Razorpay, call verify directly ============
+      if (isMockMode) {
+        try {
+          const verifyRes = await fetch("/api/payment/verify", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              isMockMode: true,
+              razorpay_order_id: order_id,
+              razorpay_payment_id: `mock_pay_${Date.now()}`,
+              razorpay_signature: "mock_signature",
+              orderDetails: {
+                db_order_id: db_order_id,
+                user_id: userId,
+                items: sessionData.cart,
+                total_amount: sessionData.finalTotalAmount,
+                shipping_details: sessionData.shippingDetails
+              }
+            })
+          });
+
+          const verifyData = await verifyRes.json();
+          if (verifyRes.ok && verifyData.success) {
+            localStorage.removeItem("apparel_cart");
+            localStorage.removeItem("apparel_checkout_session");
+
+            if (!userId) {
+              localStorage.setItem("apparel_guest_designed_once", "true");
+              sessionStorage.removeItem("apparel_current_session");
+            }
+
+            setPaymentSuccess(true);
+            setIsSubmitting(false);
+
+            setTimeout(() => {
+              window.location.href = "/";
+            }, 5000);
+          } else {
+            setPaymentError(verifyData.error || "Mock payment verification failed.");
+            setIsSubmitting(false);
+          }
+        } catch (err) {
+          setPaymentError(`Mock verification error: ${err.message}`);
+          setIsSubmitting(false);
+        }
+        return;
+      }
+
+      // ============ LIVE RAZORPAY FLOW ============
       // Configure Razorpay modal
       const options = {
         key: key_id,
@@ -154,8 +234,8 @@ export default function CheckoutPaymentPage() {
           }
         },
         prefill: {
-          name: sessionData.shippingDetails.name,
-          contact: sessionData.shippingDetails.phone
+          name: displayName,
+          contact: displayPhone
         },
         theme: {
           color: "#6366f1"
@@ -273,16 +353,16 @@ export default function CheckoutPaymentPage() {
               <div className="grid grid-cols-1 md:grid-cols-2 gap-4 text-xs pt-2">
                 <div className="space-y-1 bg-zinc-950/40 border border-zinc-900/60 p-4 rounded-xl">
                   <span className="text-[10px] text-zinc-500 font-bold uppercase block tracking-wider">Recipient Name</span>
-                  <span className="text-zinc-200 font-extrabold">{sessionData?.shippingDetails?.name}</span>
+                  <span className="text-zinc-200 font-extrabold">{displayName}</span>
                 </div>
                 <div className="space-y-1 bg-zinc-950/40 border border-zinc-900/60 p-4 rounded-xl">
                   <span className="text-[10px] text-zinc-500 font-bold uppercase block tracking-wider">Contact Phone</span>
-                  <span className="text-zinc-200 font-extrabold">{sessionData?.shippingDetails?.phone}</span>
+                  <span className="text-zinc-200 font-extrabold">{displayPhone}</span>
                 </div>
                 <div className="space-y-1 bg-zinc-950/40 border border-zinc-900/60 p-4 rounded-xl md:col-span-2">
                   <span className="text-[10px] text-zinc-500 font-bold uppercase block tracking-wider">Delivery Address</span>
                   <span className="text-zinc-200 font-semibold">
-                    {sessionData?.shippingDetails?.address}, {sessionData?.shippingDetails?.city} - <span className="font-mono font-bold text-indigo-400">{sessionData?.shippingDetails?.zip}</span>
+                    {displayAddress}{displayCity ? `, ${displayCity}` : ""} - <span className="font-mono font-bold text-indigo-400">{displayZip}</span>
                   </span>
                 </div>
               </div>

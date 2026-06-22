@@ -50,6 +50,7 @@ export async function GET(request) {
         key_id: "",
         key_secret_configured: false,
         webhook_secret_configured: false,
+        mock_mode_enabled: false,
       });
     }
 
@@ -58,6 +59,7 @@ export async function GET(request) {
       key_id: data.key_id || "",
       key_secret_configured: !!data.key_secret,
       webhook_secret_configured: !!data.webhook_secret,
+      mock_mode_enabled: !!data.mock_mode_enabled,
     });
   } catch (err) {
     return Response.json({ error: err.message }, { status: 500 });
@@ -73,7 +75,52 @@ export async function POST(request) {
 
   try {
     const body = await request.json();
-    const { enabled, key_id, key_secret, webhook_secret, test_mode } = body;
+    const { enabled, key_id, key_secret, webhook_secret, test_mode, mock_mode_enabled } = body;
+
+    // If this is ONLY a mock mode toggle update (no key_id provided), handle it directly
+    if (mock_mode_enabled !== undefined && !key_id && !test_mode) {
+      const { data: updatedRows, error: mockErr } = await supabase
+        .from("payment_gateway_settings")
+        .update({
+          mock_mode_enabled: !!mock_mode_enabled,
+          updated_at: new Date().toISOString(),
+        })
+        .eq("id", "razorpay")
+        .select();
+
+      if (mockErr) {
+        return Response.json({ error: mockErr.message }, { status: 500 });
+      }
+
+      // If no rows were updated (meaning the 'razorpay' row doesn't exist yet)
+      if (!updatedRows || updatedRows.length === 0) {
+        const { error: insertErr } = await supabase
+          .from("payment_gateway_settings")
+          .upsert({
+            id: "razorpay",
+            mock_mode_enabled: !!mock_mode_enabled,
+            updated_at: new Date().toISOString(),
+          });
+
+        if (insertErr) {
+          return Response.json({ 
+            error: `Database setup required. Please run this SQL in your Supabase SQL Editor:
+            
+ALTER TABLE payment_gateway_settings DISABLE ROW LEVEL SECURITY;
+INSERT INTO payment_gateway_settings (id, enabled, key_id, key_secret, webhook_secret, mock_mode_enabled)
+VALUES ('razorpay', false, '', '', '', ${!!mock_mode_enabled})
+ON CONFLICT (id) DO UPDATE SET mock_mode_enabled = EXCLUDED.mock_mode_enabled;`
+          }, { status: 500 });
+        }
+      }
+
+      await supabase.from("system_logs").insert([{
+        operator: auth.user.email,
+        action: `Toggled Mock Payment Mode: ${mock_mode_enabled ? "ENABLED" : "DISABLED"}.`,
+        created_at: new Date().toISOString()
+      }]);
+      return Response.json({ success: true, message: `Mock payment mode ${mock_mode_enabled ? "enabled" : "disabled"} successfully!` });
+    }
 
     if (!key_id) {
       return Response.json({ error: "Razorpay Key ID is required" }, { status: 400 });
@@ -125,6 +172,10 @@ export async function POST(request) {
       key_id: key_id.trim(),
       updated_at: new Date().toISOString(),
     };
+
+    if (mock_mode_enabled !== undefined) {
+      updatePayload.mock_mode_enabled = !!mock_mode_enabled;
+    }
 
     if (key_secret) {
       updatePayload.key_secret = key_secret.trim();

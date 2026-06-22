@@ -67,7 +67,7 @@ export async function POST(request) {
         const { data: existingGuestOrders, error: orderErr } = await supabase
           .from("orders")
           .select("id")
-          .eq("shipping_details->>email", cleanEmail)
+          .eq("customer_email", cleanEmail)
           .neq("status", "cancelled")
           .limit(1);
 

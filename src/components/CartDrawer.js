@@ -20,6 +20,14 @@ export default function CartDrawer({ isOpen, onClose }) {
   const [checkoutSuccess, setCheckoutSuccess] = useState(false);
   const [isSubmittingOrder, setIsSubmittingOrder] = useState(false);
   const [formErrors, setFormErrors] = useState({});
+  const [activeToast, setActiveToast] = useState(null);
+
+  useEffect(() => {
+    if (activeToast) {
+      const timer = setTimeout(() => setActiveToast(null), 5000);
+      return () => clearTimeout(timer);
+    }
+  }, [activeToast]);
 
   // Address State
   const [customerName, setCustomerName] = useState("");
@@ -60,6 +68,31 @@ export default function CartDrawer({ isOpen, onClose }) {
       } catch (err) {
         console.warn("Failed to load saved address:", err);
       }
+
+      // Sync fresh stock status for all cart items from Supabase
+      const syncCartItemsStock = async () => {
+        try {
+          const productIds = cart.map(item => item.productId).filter(Boolean);
+          if (productIds.length === 0) return;
+          
+          const { data, error } = await supabase
+            .from("products")
+            .select("id, stock_status")
+            .in("id", productIds);
+            
+          if (!error && data) {
+            data.forEach(p => {
+              if (p.stock_status) {
+                localStorage.setItem(`apparel_stock_${p.id}`, p.stock_status);
+              }
+            });
+            loadCart();
+          }
+        } catch (err) {
+          console.warn("Real-time cart stock sync failed:", err);
+        }
+      };
+      syncCartItemsStock();
     }
   }, [isOpen]);
 
@@ -159,6 +192,19 @@ export default function CartDrawer({ isOpen, onClose }) {
   const handlePlaceOrder = async (e) => {
     e.preventDefault();
     if (cart.length === 0) return;
+
+    // Check if any items are out of stock
+    const hasOutOfStock = cart.some(item => {
+      const status = typeof window !== "undefined" ? localStorage.getItem(`apparel_stock_${item.productId}`) : "in_stock";
+      return status === "out_of_stock";
+    });
+    if (hasOutOfStock) {
+      setActiveToast({
+        title: "⚠️ Checkout Blocked",
+        message: "Please remove out-of-stock items from your bag before confirming payment."
+      });
+      return;
+    }
 
     // Form Validation Checks
     const errors = {};
@@ -337,6 +383,21 @@ export default function CartDrawer({ isOpen, onClose }) {
           <div className="absolute inset-y-0 right-0 max-w-md w-full flex">
             <div className="w-full bg-zinc-950 border-l border-zinc-900 flex flex-col justify-between shadow-2xl relative">
               
+              {activeToast && (
+                <div className="absolute top-16 left-4 right-4 z-50 bg-zinc-900/95 border border-zinc-800/80 backdrop-blur-lg p-3.5 rounded-xl shadow-2xl flex items-start justify-between gap-3 border-l-4 border-l-indigo-500 transition-all duration-300">
+                  <div className="flex-1 min-w-0">
+                    <p className="text-xs font-black text-white uppercase tracking-wider">{activeToast.title}</p>
+                    <p className="text-[11px] text-zinc-400 mt-0.5 leading-relaxed font-medium">{activeToast.message}</p>
+                  </div>
+                  <button 
+                    onClick={() => setActiveToast(null)} 
+                    className="p-1 hover:bg-zinc-800 rounded text-zinc-500 hover:text-white transition-colors cursor-pointer"
+                  >
+                    <X className="w-3.5 h-3.5" />
+                  </button>
+                </div>
+              )}
+              
               <div className="p-5 border-b border-zinc-900 flex items-center justify-between bg-zinc-950/20 sticky top-0 z-10 backdrop-blur-md">
                 <div className="flex items-center gap-2">
                   <CartIcon className="w-5 h-5 text-indigo-400" />
@@ -510,9 +571,23 @@ export default function CartDrawer({ isOpen, onClose }) {
                     <div key={item.id} className="bg-zinc-900/40 border border-zinc-900/80 rounded-xl p-4 flex gap-4 items-start relative group">
                       <div className="w-20 h-20 bg-zinc-950 border border-zinc-850 rounded-lg overflow-hidden shrink-0 flex items-center justify-center relative">
                         <img src={item.thumbnailUrl || item.customDesignUrl} alt={item.name} className="w-full h-full object-cover" />
+                        {(() => {
+                          const status = typeof window !== "undefined" ? localStorage.getItem(`apparel_stock_${item.productId}`) : "in_stock";
+                          return status === "out_of_stock" && (
+                            <div className="absolute inset-0 bg-black/75 flex items-center justify-center text-[10px] font-black text-red-400 tracking-wider uppercase select-none">OOS</div>
+                          );
+                        })()}
                       </div>
                       <div className="flex-1 min-w-0">
-                        <h4 className="font-extrabold text-sm text-zinc-200 truncate pr-6">{item.name}</h4>
+                        <div className="flex items-start justify-between gap-2">
+                          <h4 className="font-extrabold text-sm text-zinc-200 truncate pr-2 flex-1">{item.name}</h4>
+                          {(() => {
+                            const status = typeof window !== "undefined" ? localStorage.getItem(`apparel_stock_${item.productId}`) : "in_stock";
+                            return status === "out_of_stock" && (
+                              <span className="text-[8px] bg-red-950/40 border border-red-900/40 text-red-400 font-extrabold px-1.5 py-0.5 rounded uppercase tracking-wider shrink-0 select-none">Out of Stock</span>
+                            );
+                          })()}
+                        </div>
                         {item.customName && (
                           <div className="mt-1 flex items-center gap-1.5 bg-indigo-500/10 border border-indigo-500/20 px-2 py-0.5 rounded-lg w-max select-none">
                             <span className="text-sm font-extrabold text-indigo-400 uppercase tracking-widest">👕 Jersey: {item.customName} ({item.customNumber || "00"})</span>
@@ -574,7 +649,23 @@ export default function CartDrawer({ isOpen, onClose }) {
                     <div className="flex justify-between text-zinc-500"><span>Delivery Fee</span><span className="font-sans text-zinc-400 italic">Calculated at checkout</span></div>
                     <div className="flex justify-between border-t border-zinc-900 pt-3 text-sm font-extrabold text-white"><span>Total Value</span><span className="font-mono text-indigo-400">₹{finalTotalAmount.toLocaleString('en-IN')}</span></div>
                   </div>
-                  <button onClick={() => setIsCheckingOut(true)} className="w-full bg-gradient-to-r from-indigo-500 to-purple-600 hover:from-indigo-600 hover:to-purple-700 text-white font-bold text-sm py-3 px-4 rounded-xl shadow-lg transition-all flex items-center justify-center gap-2 cursor-pointer">
+                  <button 
+                    onClick={() => {
+                      const hasOutOfStock = cart.some(item => {
+                        const status = typeof window !== "undefined" ? localStorage.getItem(`apparel_stock_${item.productId}`) : "in_stock";
+                        return status === "out_of_stock";
+                      });
+                      if (hasOutOfStock) {
+                        setActiveToast({
+                          title: "⚠️ Checkout Blocked",
+                          message: "Please remove out-of-stock items from your bag before proceeding."
+                        });
+                        return;
+                      }
+                      setIsCheckingOut(true);
+                    }} 
+                    className="w-full bg-gradient-to-r from-indigo-500 to-purple-600 hover:from-indigo-600 hover:to-purple-700 text-white font-bold text-sm py-3 px-4 rounded-xl shadow-lg transition-all flex items-center justify-center gap-2 cursor-pointer"
+                  >
                     <span>Proceed to Address details</span>
                     <ChevronRight className="w-4 h-4" />
                   </button>

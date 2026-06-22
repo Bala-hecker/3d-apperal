@@ -1,0 +1,43 @@
+Created At: 2026-06-15T05:50:18Z
+Completed At: 2026-06-15T05:50:18Z
+File Path: `file:///e:/APP%203D/3d-apparel-studio/scratch/extract_all_views.js`
+Total Lines: 35
+Total Bytes: 1090
+Showing lines 1 to 35
+The following code has been modified to include a line number before every line, in the format: <line_number>: <original_line>. Please note that any changes targeting the original code should remove the line number, colon, and leading space.
+1: const fs = require('fs');
+2: const readline = require('readline');
+3: 
+4: const logFile = 'C:\\Users\\Balamurugan\\.gemini\\antigravity-ide\\brain\\14342646-882e-4d6c-83a2-5752e47c2cbe\\.system_generated\\logs\\transcript.jsonl';
+5: 
+6: async function run() {
+7:   const fileStream = fs.createReadStream(logFile);
+8:   const rl = readline.createInterface({
+9:     input: fileStream,
+10:     crlfDelay: Infinity
+11:   });
+12: 
+13:   for await (const line of rl) {
+14:     if (!line) continue;
+15:     try {
+16:       const step = JSON.parse(line);
+17:       const str = JSON.stringify(step);
+18:       if (str.includes('HomeLandingPage')) {
+19:         console.log('--- MATCH HomeLandingPage ---');
+20:         console.log('Step Index:', step.step_index);
+21:         console.log('Type:', step.type);
+22:         console.log('Content preview:', step.content?.substring(0, 100));
+23:         if (step.type === 'VIEW_FILE') {
+24:           fs.writeFileSync(`scratch/recovered_view_${step.step_index}.txt`, step.content || '');
+25:           console.log(`Saved scratch/recovered_view_${step.step_index}.txt`);
+26:         }
+27:       }
+28:     } catch (e) {
+29:       // ignore
+30:     }
+31:   }
+32: }
+33: 
+34: run();
+35: 
+The above content shows the entire, complete file contents of the requested file.

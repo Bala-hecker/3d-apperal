@@ -56,7 +56,7 @@ export async function POST(request) {
         const { data, error } = await supabase
           .from("orders")
           .select("*")
-          .eq("shipping_details->payment_details->>razorpay_order_id", razorpayOrderId)
+          .eq("shipping_address->payment_details->>razorpay_order_id", razorpayOrderId)
           .limit(1)
           .maybeSingle();
 
@@ -98,10 +98,10 @@ export async function POST(request) {
       if (matchingOrder) {
         // If order already exists, ensure status is processing and payment details are attached
         if (matchingOrder.status === "pending" || matchingOrder.status === "awaiting_payment") {
-          const updatedShippingDetails = {
-            ...matchingOrder.shipping_details,
+          const updatedShippingAddress = {
+            ...matchingOrder.shipping_address,
             payment_details: {
-              ...(matchingOrder.shipping_details?.payment_details || {}),
+              ...(matchingOrder.shipping_address?.payment_details || {}),
               razorpay_order_id: razorpayOrderId,
               razorpay_payment_id: razorpayPaymentId,
               webhook_verified_at: new Date().toISOString()
@@ -112,7 +112,7 @@ export async function POST(request) {
             .from("orders")
             .update({ 
               status: "processing",
-              shipping_details: updatedShippingDetails,
+              shipping_address: updatedShippingAddress,
               updated_at: new Date().toISOString()
             })
             .eq("id", matchingOrder.id);
@@ -157,11 +157,14 @@ export async function POST(request) {
 
             const finalOrderPayload = {
               user_id: userId === "guest" ? null : userId,
-              items: items,
-              total_amount: amount,
-              status: "processing",
-              shipping_details: {
-                ...shipping_details,
+              customer_name: shipping_details.name || "Guest",
+              customer_email: notes.customer_email || shipping_details.email || "",
+              customer_phone: shipping_details.phone || "",
+              shipping_address: {
+                address: shipping_details.address,
+                city: shipping_details.city,
+                state: shipping_details.state || "",
+                zip: shipping_details.zip,
                 coupon_code: notes.coupon_code || null,
                 payment_details: {
                   razorpay_order_id: razorpayOrderId,
@@ -169,6 +172,9 @@ export async function POST(request) {
                   webhook_verified_at: new Date().toISOString()
                 }
               },
+              items: items,
+              total_amount: amount,
+              status: "processing",
               payment_gateway: "razorpay"
             };
 

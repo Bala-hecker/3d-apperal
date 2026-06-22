@@ -1,0 +1,49 @@
+Created At: 2026-06-15T05:34:15Z
+Completed At: 2026-06-15T05:34:15Z
+File Path: `file:///E:/APP%203D/3d-apparel-studio/src/app/page.js`
+Total Lines: 1071
+Total Bytes: 51019
+Showing lines 260 to 300
+The following code has been modified to include a line number before every line, in the format: <line_number>: <original_line>. Please note that any changes targeting the original code should remove the line number, colon, and leading space.
+260:         </div>
+261:       </div>
+262:     </div>
+263:   );
+264: }
+265: 
+266: export default function HomeLandingPage() {
+267:   const containerRef = useRef(null);
+268:   const [session, setSession] = useState(null);
+269:   const [featuredProducts, setFeaturedProducts] = useState([]);
+270:   const [loadingFeatured, setLoadingFeatured] = useState(true);
+271:   const [designsCount, setDesignsCount] = useState(0);
+272:   const [overlayColor, setOverlayColor] = useState("rgba(0,0,0,0)");
+273:   const [announcementText, setAnnouncementText] = useState("⚡ NEXT-GEN 3D STUDIO COUTURE DROP LIVE · USE CODE THREAD3D FOR 20% OFF ⚡");
+274:   
+275:   // Carousel State
+276:   const [currentSlide, setCurrentSlide] = useState(0);
+277:   const slideInterval = useRef(null);
+278: 
+279:   // Dynamic Promotion Cards State & Default Seed Values
+280:   const [promoCards, setPromoCards] = useState([
+281:     { id: 1, badge: "Thread3D Originals", title: "Classic Boxy Tees", description: "Perfect drop-shoulder silhouettes tailored from 380 GSM certified organic cotton.", image_url: "/boxy_tee_promo.png", cta_text: "Explore Drop", cta_href: "/dashboard?category=t-shirt", accent_color: "indigo" },
+282:     { id: 2, badge: "Anime Special Edition", title: "The Anime Zone", description: "Officially licensed subculture prints and glowing reflective patterns.", image_url: "/anime_streetwear_promo.png", cta_text: "Explore Drop", cta_href: "/dashboard?q=anime", accent_color: "purple" },
+283:     { id: 3, badge: "Interactive Studio", title: "Create in 3D Customizer", description: "Upload your graphics, change base colors, adjust lighting and roughness properties live.", image_url: "/threejs_customizer_promo.png", cta_text: "Design Now", cta_href: "/studio", accent_color: "pink" },
+284:     { id: 4, badge: "Premium Jackets", title: "Cozy Winterwear", description: "Heavy luxury fleece garments, utility jacket shells, and oversized joggers.", image_url: "/winter_jacket_promo.png", cta_text: "Explore Drop", cta_href: "/dashboard?category=jacket", accent_color: "emerald" }
+285:   ]);
+286: 
+287:   const colorMap = {
+288:     indigo: {
+289:       badge: "text-indigo-400",
+290:       accentGlow: "bg-indigo-500/10",
+291:       hoverGlow: "group-hover:bg-indigo-950/20",
+292:       btnText: "group-hover:text-indigo-400",
+293:       borderHover: "group-hover:border-indigo-500/40"
+294:     },
+295:     purple: {
+296:       badge: "text-purple-400",
+297:       accentGlow: "bg-purple-500/10",
+298:       hoverGlow: "group-hover:bg-purple-950/20",
+299:       btnText: "group-hover:text-purple-400",
+300:       borderHover: "group-hover:border-purple-500/40"
+The above content does NOT show the entire file contents. If you need to view any lines of the file which were not shown to complete your task, call this tool again to view those lines.

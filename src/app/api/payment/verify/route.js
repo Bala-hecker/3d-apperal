@@ -36,9 +36,119 @@ export async function POST(request) {
       razorpay_order_id,
       razorpay_payment_id,
       razorpay_signature,
-      orderDetails
+      orderDetails,
+      isMockMode
     } = body;
 
+    // ============ MOCK MODE VERIFICATION ============
+    if (isMockMode || (razorpay_order_id && razorpay_order_id.startsWith("mock_"))) {
+      // Verify mock mode is actually enabled in the database
+      const { data: mockSettings } = await supabase
+        .from("payment_gateway_settings")
+        .select("mock_mode_enabled")
+        .eq("id", "razorpay")
+        .single();
+
+      if (!mockSettings?.mock_mode_enabled) {
+        return Response.json({ error: "Mock payment mode is not enabled." }, { status: 403 });
+      }
+
+      if (!orderDetails) {
+        return Response.json({ error: "Missing order details for mock verification." }, { status: 400 });
+      }
+
+      // Find the existing pending mock order by db_order_id
+      const dbOrderId = orderDetails.db_order_id;
+      let finalOrder = null;
+
+      if (dbOrderId) {
+        const isConsultation = orderDetails.isDesignerConsultation || 
+                               (orderDetails.items && orderDetails.items.some(it => it.id === "designer_consultation" || it.productId === "designer_consultation"));
+        const initialStatus = isConsultation ? "confirming_design" : "processing";
+
+        const { data: updatedOrder, error: updateError } = await supabase
+          .from("orders")
+          .update({
+            status: initialStatus,
+            shipping_address: {
+              address: orderDetails.shipping_details?.address || orderDetails.shipping_address?.address || "",
+              city: orderDetails.shipping_details?.city || orderDetails.shipping_address?.city || "",
+              state: orderDetails.shipping_details?.state || orderDetails.shipping_address?.state || "",
+              zip: orderDetails.shipping_details?.zip || orderDetails.shipping_address?.zip || "",
+              coupon_code: orderDetails.couponCode || orderDetails.coupon_code || orderDetails.shipping_details?.coupon_code || null,
+              payment_details: {
+                razorpay_order_id: razorpay_order_id || `mock_order_verified`,
+                razorpay_payment_id: razorpay_payment_id || `mock_pay_${Date.now()}`,
+                razorpay_signature: "mock_signature",
+                verified_at: new Date().toISOString()
+              }
+            }
+          })
+          .eq("id", dbOrderId)
+          .select("id")
+          .single();
+
+        if (updateError || !updatedOrder) {
+          console.error("Failed to verify mock order:", updateError);
+          return Response.json({ error: "Failed to verify mock order." }, { status: 500 });
+        }
+        finalOrder = updatedOrder;
+      } else {
+        // Fallback: create the order from scratch mapped to actual database columns
+        const isConsultation = orderDetails.isDesignerConsultation || 
+                               (orderDetails.items && orderDetails.items.some(it => it.id === "designer_consultation" || it.productId === "designer_consultation"));
+        const initialStatus = isConsultation ? "confirming_design" : "processing";
+
+        const { data: insertedOrder, error: insertError } = await supabase
+          .from("orders")
+          .insert([{
+            user_id: orderDetails.user_id || null,
+            customer_name: orderDetails.shipping_details?.name || orderDetails.customer_name || "Guest",
+            customer_email: orderDetails.shipping_details?.email || orderDetails.customer_email || "",
+            customer_phone: orderDetails.shipping_details?.phone || orderDetails.customer_phone || "",
+            shipping_address: {
+              address: orderDetails.shipping_details?.address || orderDetails.shipping_address?.address || "",
+              city: orderDetails.shipping_details?.city || orderDetails.shipping_address?.city || "",
+              state: orderDetails.shipping_details?.state || orderDetails.shipping_address?.state || "",
+              zip: orderDetails.shipping_details?.zip || orderDetails.shipping_address?.zip || "",
+              coupon_code: orderDetails.couponCode || orderDetails.coupon_code || orderDetails.shipping_details?.coupon_code || null,
+              payment_details: {
+                razorpay_order_id: razorpay_order_id || `mock_order_verified`,
+                razorpay_payment_id: `mock_pay_${Date.now()}`,
+                razorpay_signature: "mock_signature",
+                verified_at: new Date().toISOString()
+              }
+            },
+            items: orderDetails.items,
+            total_amount: orderDetails.total_amount,
+            status: initialStatus,
+            payment_gateway: "mock_test"
+          }])
+          .select("id")
+          .single();
+
+        if (insertError || !insertedOrder) {
+          console.error("Failed to create mock order:", insertError);
+          return Response.json({ error: "Failed to save mock order." }, { status: 500 });
+        }
+        finalOrder = insertedOrder;
+      }
+
+      // Log mock order
+      await supabase.from("system_logs").insert([{
+        operator: "system/mock-payment",
+        action: `Mock order #${finalOrder.id} verified and placed successfully.`,
+        created_at: new Date().toISOString()
+      }]);
+
+      return Response.json({
+        success: true,
+        orderId: finalOrder.id,
+        message: "Mock payment verified and order placed successfully!"
+      });
+    }
+
+    // ============ LIVE RAZORPAY VERIFICATION ============
     if (!razorpay_order_id || !razorpay_payment_id || !razorpay_signature || !orderDetails) {
       return Response.json({ error: "Missing required verification details." }, { status: 400 });
     }
@@ -73,13 +183,13 @@ export async function POST(request) {
       return Response.json({ error: "Invalid payment signature. Verification failed." }, { status: 400 });
     }
 
-    // 3. Try to locate existing pending order pre-created in the database
+    // 3. Try to locate existing pending order pre-created in the database using actual columns
     let existingOrder = null;
     try {
       const { data } = await supabase
         .from("orders")
         .select("*")
-        .eq("shipping_details->payment_details->>razorpay_order_id", razorpay_order_id)
+        .eq("shipping_address->payment_details->>razorpay_order_id", razorpay_order_id)
         .limit(1)
         .maybeSingle();
       if (data) {
@@ -93,8 +203,12 @@ export async function POST(request) {
     let saveError = null;
 
     if (existingOrder) {
-      const shippingDetails = {
-        ...existingOrder.shipping_details,
+      const isConsultation = existingOrder.shipping_address?.isDesignerConsultation || 
+                             (existingOrder.items && existingOrder.items.some(it => it.id === "designer_consultation" || it.productId === "designer_consultation"));
+      const initialStatus = isConsultation ? "confirming_design" : "processing";
+
+      const updatedShippingAddress = {
+        ...existingOrder.shipping_address,
         payment_details: {
           razorpay_order_id,
           razorpay_payment_id,
@@ -106,8 +220,8 @@ export async function POST(request) {
       const { data: updatedOrder, error: updateError } = await supabase
         .from("orders")
         .update({
-          status: "processing",
-          shipping_details: shippingDetails
+          status: initialStatus,
+          shipping_address: updatedShippingAddress
         })
         .eq("id", existingOrder.id)
         .select("id")
@@ -120,22 +234,31 @@ export async function POST(request) {
       }
     } else {
       // Create new order (fallback for backward compatibility or cases where pre-creation failed)
-      const shippingDetails = {
-        ...orderDetails.shipping_details,
-        payment_details: {
-          razorpay_order_id,
-          razorpay_payment_id,
-          razorpay_signature,
-          verified_at: new Date().toISOString()
-        }
-      };
+      const isConsultation = orderDetails.isDesignerConsultation || 
+                             (orderDetails.items && orderDetails.items.some(it => it.id === "designer_consultation" || it.productId === "designer_consultation"));
+      const initialStatus = isConsultation ? "confirming_design" : "processing";
 
       const finalOrderPayload = {
         user_id: orderDetails.user_id || null,
+        customer_name: orderDetails.shipping_details?.name || orderDetails.customer_name || "Guest",
+        customer_email: orderDetails.shipping_details?.email || orderDetails.customer_email || "",
+        customer_phone: orderDetails.shipping_details?.phone || orderDetails.customer_phone || "",
+        shipping_address: {
+          address: orderDetails.shipping_details?.address || orderDetails.shipping_address?.address || "",
+          city: orderDetails.shipping_details?.city || orderDetails.shipping_address?.city || "",
+          state: orderDetails.shipping_details?.state || orderDetails.shipping_address?.state || "",
+          zip: orderDetails.shipping_details?.zip || orderDetails.shipping_address?.zip || "",
+          coupon_code: orderDetails.couponCode || orderDetails.coupon_code || orderDetails.shipping_details?.coupon_code || null,
+          payment_details: {
+            razorpay_order_id,
+            razorpay_payment_id,
+            razorpay_signature,
+            verified_at: new Date().toISOString()
+          }
+        },
         items: orderDetails.items,
         total_amount: orderDetails.total_amount,
-        status: "processing",
-        shipping_details: shippingDetails,
+        status: initialStatus,
         payment_gateway: "razorpay"
       };
 
@@ -203,7 +326,7 @@ export async function POST(request) {
     }
 
     // 4. Increment coupon used_count if a coupon was applied
-    const appliedCoupon = orderDetails.couponCode || orderDetails.coupon_code || orderDetails.shipping_details?.coupon_code;
+    const appliedCoupon = orderDetails.couponCode || orderDetails.coupon_code || orderDetails.shipping_details?.coupon_code || orderDetails.shipping_address?.coupon_code;
     if (appliedCoupon) {
       try {
         const codeToIncrement = appliedCoupon.trim().toUpperCase();

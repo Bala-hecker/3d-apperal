@@ -29,7 +29,8 @@ import {
   Lock,
   X,
   Tag,
-  ShoppingBag
+  ShoppingBag,
+  Search
 } from "lucide-react";
 import Link from "next/link";
 import Navbar from "@/components/Navbar";
@@ -122,6 +123,7 @@ export default function StudioPage() {
   const [activeProduct, setActiveProduct] = useState(null);
   const [loadingProducts, setLoadingProducts] = useState(true);
   const [selectedCategoryTab, setSelectedCategoryTab] = useState("all");
+  const [searchQuery, setSearchQuery] = useState("");
 
   // Canvas / Studio references
   const fabricCanvasRef = useRef(null);
@@ -154,10 +156,70 @@ export default function StudioPage() {
   
   // Custom Premium Fabric Selection state tokens
   const [selectedFabric, setSelectedFabric] = useState("cotton"); // cotton, polyester, fleece
+  const [studioSettings, setStudioSettings] = useState({
+    cotton_upcharge: 0,
+    polyester_upcharge: 999,
+    fleece_upcharge: 1299,
+    customization_base_fee: 0,
+    cotton_roughness: 0.85,
+    cotton_metalness: 0.1,
+    cotton_bump_scale: 0.04,
+    polyester_roughness: 0.25,
+    polyester_metalness: 0.45,
+    polyester_bump_scale: 0.02,
+    fleece_roughness: 1.0,
+    fleece_metalness: 0.05,
+    fleece_bump_scale: 0.06,
+    cotton_label: "Matte Organic Cotton",
+    cotton_desc: "Flat, organic 100% cotton threads",
+    polyester_label: "Shiny Athletic Polyester",
+    polyester_desc: "Reflective, sleek high-performance finish",
+    fleece_label: "Heavy Luxury Fleece",
+    fleece_desc: "Extra thick, warm luxury heavy fleece feel"
+  });
+
+  useEffect(() => {
+    const fetchStudioSettings = async () => {
+      try {
+        const { data, error } = await supabase
+          .from("studio_pricing_settings")
+          .select("*")
+          .eq("id", "default")
+          .single();
+        if (data && !error) {
+          setStudioSettings({
+            cotton_upcharge: Number(data.cotton_upcharge ?? 0),
+            polyester_upcharge: Number(data.polyester_upcharge ?? 999),
+            fleece_upcharge: Number(data.fleece_upcharge ?? 1299),
+            customization_base_fee: Number(data.customization_base_fee ?? 0),
+            cotton_roughness: Number(data.cotton_roughness ?? 0.85),
+            cotton_metalness: Number(data.cotton_metalness ?? 0.1),
+            cotton_bump_scale: Number(data.cotton_bump_scale ?? 0.04),
+            polyester_roughness: Number(data.polyester_roughness ?? 0.25),
+            polyester_metalness: Number(data.polyester_metalness ?? 0.45),
+            polyester_bump_scale: Number(data.polyester_bump_scale ?? 0.02),
+            fleece_roughness: Number(data.fleece_roughness ?? 1.0),
+            fleece_metalness: Number(data.fleece_metalness ?? 0.05),
+            fleece_bump_scale: Number(data.fleece_bump_scale ?? 0.06),
+            cotton_label: data.cotton_label || "Matte Organic Cotton",
+            cotton_desc: data.cotton_desc || "Flat, organic 100% cotton threads",
+            polyester_label: data.polyester_label || "Shiny Athletic Polyester",
+            polyester_desc: data.polyester_desc || "Reflective, sleek high-performance finish",
+            fleece_label: data.fleece_label || "Heavy Luxury Fleece",
+            fleece_desc: data.fleece_desc || "Extra thick, warm luxury heavy fleece feel"
+          });
+        }
+      } catch (err) {
+        console.warn("Could not fetch studio pricing settings from database:", err);
+      }
+    };
+    fetchStudioSettings();
+  }, []);
+
   const fabricProperties = {
-    cotton: { roughness: 0.85, metalness: 0.1, upcharge: 0, label: "Matte Organic Cotton", bumpScale: 0.04 },
-    polyester: { roughness: 0.25, metalness: 0.45, upcharge: 999, label: "Shiny Athletic Polyester", bumpScale: 0.02 },
-    fleece: { roughness: 1.0, metalness: 0.05, upcharge: 1299, label: "Heavy Luxury Fleece", bumpScale: 0.06 }
+    cotton: { roughness: studioSettings.cotton_roughness, metalness: studioSettings.cotton_metalness, upcharge: studioSettings.cotton_upcharge, label: studioSettings.cotton_label, bumpScale: studioSettings.cotton_bump_scale, desc: studioSettings.cotton_desc },
+    polyester: { roughness: studioSettings.polyester_roughness, metalness: studioSettings.polyester_metalness, upcharge: studioSettings.polyester_upcharge, label: studioSettings.polyester_label, bumpScale: studioSettings.polyester_bump_scale, desc: studioSettings.polyester_desc },
+    fleece: { roughness: studioSettings.fleece_roughness, metalness: studioSettings.fleece_metalness, upcharge: studioSettings.fleece_upcharge, label: studioSettings.fleece_label, bumpScale: studioSettings.fleece_bump_scale, desc: studioSettings.fleece_desc }
   };
 
   // Three.js Light References and Environment State
@@ -177,6 +239,14 @@ export default function StudioPage() {
 
   // Direct Checkout States
   const [showCheckoutModal, setShowCheckoutModal] = useState(false);
+  const [activeToast, setActiveToast] = useState(null);
+
+  useEffect(() => {
+    if (activeToast) {
+      const timer = setTimeout(() => setActiveToast(null), 5000);
+      return () => clearTimeout(timer);
+    }
+  }, [activeToast]);
   const [customerName, setCustomerName] = useState("");
   const [customerPhone, setCustomerPhone] = useState("");
   const [customerAddress, setCustomerAddress] = useState("");
@@ -221,7 +291,10 @@ export default function StudioPage() {
 
   const openPublishModal = () => {
     if (!activeProduct) {
-      alert("Please select a garment to customize first!");
+      setActiveToast({
+        title: "⚠️ Garment Required",
+        message: "Please select a garment to customize first!"
+      });
       return;
     }
     setPublishName(`Designer Special - ${activeProduct.name}`);
@@ -233,7 +306,10 @@ export default function StudioPage() {
 
   const handlePublishToCatalog = async () => {
     if (!activeProduct) {
-      alert("Please select a garment to customize first!");
+      setActiveToast({
+        title: "⚠️ Garment Required",
+        message: "Please select a garment to customize first!"
+      });
       return;
     }
 
@@ -372,11 +448,17 @@ export default function StudioPage() {
       // 5. Log security audit trail
       await addAuditLog(`Published pre-designed standard catalog product "${publishName}" with 4-side 3D photos under category "${publishCategory}" with base price: ₹${parseFloat(publishPrice).toLocaleString('en-IN')}.`);
 
-      alert("Design published successfully as a 4-side pre-designed catalog product!");
+      setActiveToast({
+        title: "🚀 Design Published",
+        message: "Design published successfully as a 4-side pre-designed catalog product!"
+      });
       setShowPublishModal(false);
     } catch (err) {
       console.error("Failed to publish design:", err.message || err);
-      alert(`Publishing failed: ${err.message || err}`);
+      setActiveToast({
+        title: "⚠️ Publishing Failed",
+        message: `Publishing failed: ${err.message || err}`
+      });
     } finally {
       document.body.removeChild(loaderOverlay);
       setIsPublishing(false);
@@ -461,7 +543,25 @@ export default function StudioPage() {
       if (templates.length > 0) {
         const params = new URLSearchParams(window.location.search);
         const urlProductId = (params.get("product") || "").toLowerCase().trim();
-        const selectedProduct = templates.find(p => p.id === urlProductId || getSlug(p.name) === urlProductId) || templates[0];
+        const urlCategory = (params.get("category") || "").toLowerCase().trim();
+        
+        if (urlCategory) {
+          setSelectedCategoryTab(urlCategory);
+        }
+        
+        let selectedProduct;
+        if (urlProductId) {
+          selectedProduct = templates.find(p => p.id === urlProductId || getSlug(p.name) === urlProductId);
+        }
+        
+        if (!selectedProduct && urlCategory) {
+          selectedProduct = templates.find(p => (p.category || "").toLowerCase().trim() === urlCategory);
+        }
+        
+        if (!selectedProduct) {
+          selectedProduct = templates[0];
+        }
+        
         setActiveProduct(selectedProduct);
       }
     } catch (err) {
@@ -1410,6 +1510,26 @@ export default function StudioPage() {
 
   const handleCheckoutSubmit = async (e) => {
     e.preventDefault();
+    if (!activeProduct) return;
+
+    // Check stock status
+    const dbStockStatus = activeProduct.stock_status || null;
+    const rawStockLocal = typeof window !== "undefined" ? localStorage.getItem(`apparel_stock_${activeProduct.id}`) : null;
+    let persStockStatus = "in_stock";
+    if (activeProduct.description) {
+      const stockMatch = activeProduct.description.match(/<!--STOCK:STATUS=(in_stock|out_of_stock)-->/);
+      if (stockMatch) {
+        persStockStatus = stockMatch[1];
+      }
+    }
+    const activeProductStock = rawStockLocal || dbStockStatus || persStockStatus || "in_stock";
+    if (activeProductStock === "out_of_stock") {
+      setActiveToast({
+        title: "⚠️ Product Out of Stock",
+        message: `Sorry, ${activeProduct.name} is currently out of stock and cannot be purchased.`
+      });
+      return;
+    }
     
     // Form Validation Checks
     const errors = {};
@@ -1519,7 +1639,10 @@ export default function StudioPage() {
     } catch (e) {
       console.error("Failed to compile direct checkout session:", e);
       setIsSubmittingCheckout(false);
-      alert("Checkout failed to initiate. Please try again.");
+      setActiveToast({
+        title: "⚠️ Checkout Failed",
+        message: "Checkout failed to initiate. Please try again."
+      });
     }
   };
 
@@ -1531,7 +1654,29 @@ export default function StudioPage() {
     }
 
     if (!activeProduct) {
-      alert("Please select a garment to customize first!");
+      setActiveToast({
+        title: "⚠️ Garment Required",
+        message: "Please select a garment to customize first!"
+      });
+      return;
+    }
+
+    // Check stock status
+    const dbStockStatus = activeProduct.stock_status || null;
+    const rawStockLocal = typeof window !== "undefined" ? localStorage.getItem(`apparel_stock_${activeProduct.id}`) : null;
+    let persStockStatus = "in_stock";
+    if (activeProduct.description) {
+      const stockMatch = activeProduct.description.match(/<!--STOCK:STATUS=(in_stock|out_of_stock)-->/);
+      if (stockMatch) {
+        persStockStatus = stockMatch[1];
+      }
+    }
+    const activeProductStock = rawStockLocal || dbStockStatus || persStockStatus || "in_stock";
+    if (activeProductStock === "out_of_stock") {
+      setActiveToast({
+        title: "⚠️ Product Out of Stock",
+        message: `Sorry, ${activeProduct.name} is currently out of stock and cannot be purchased.`
+      });
       return;
     }
 
@@ -1568,10 +1713,10 @@ export default function StudioPage() {
         quality: 0.95
       });
 
-      // Calculate final pricing based on active product base price + selected premium fabric upcharge
+      // Calculate final pricing based on active product base price + selected premium fabric upcharge + customization base fee
       const fabricProps = fabricProperties[selectedFabric] || fabricProperties.cotton;
       const upcharge = fabricProps.upcharge;
-      const finalPrice = (activeProduct.price || 3999) + upcharge;
+      const finalPrice = (activeProduct.price || 3999) + upcharge + studioSettings.customization_base_fee;
 
       const customProductId = `custom_${Date.now()}`;
 
@@ -1598,7 +1743,10 @@ export default function StudioPage() {
       if (document.body.contains(loaderOverlay)) {
         document.body.removeChild(loaderOverlay);
       }
-      alert("Could not initialize checkout. Please try again.");
+      setActiveToast({
+        title: "⚠️ Checkout Error",
+        message: "Could not initialize checkout. Please try again."
+      });
     }
   };
 
@@ -1623,6 +1771,20 @@ export default function StudioPage() {
 
   return (
     <div className="h-screen w-screen flex flex-col bg-zinc-950 text-white overflow-hidden font-sans">
+      {activeToast && (
+        <div className="fixed top-20 right-4 z-[9999] bg-zinc-900/95 border border-zinc-800/80 backdrop-blur-lg p-3.5 rounded-xl shadow-2xl flex items-start justify-between gap-3 border-l-4 border-l-indigo-500 w-80 transition-all duration-300">
+          <div className="flex-1 min-w-0">
+            <p className="text-xs font-black text-white uppercase tracking-wider">{activeToast.title}</p>
+            <p className="text-[11px] text-zinc-400 mt-0.5 leading-relaxed font-medium">{activeToast.message}</p>
+          </div>
+          <button 
+            onClick={() => setActiveToast(null)} 
+            className="p-1 hover:bg-zinc-800 rounded text-zinc-500 hover:text-white transition-colors cursor-pointer"
+          >
+            <X className="w-3.5 h-3.5" />
+          </button>
+        </div>
+      )}
       
       {/* Studio Header (Unified Shared Navbar) */}
       <Navbar>
@@ -1679,6 +1841,28 @@ export default function StudioPage() {
                 </button>
               ))}
             </div>
+
+            {/* Search Bar */}
+            <div className="mt-3 relative">
+              <span className="absolute inset-y-0 left-0 flex items-center pl-3 pointer-events-none">
+                <Search className="h-3.5 w-3.5 text-zinc-500" />
+              </span>
+              <input
+                type="text"
+                placeholder="Search base garments..."
+                value={searchQuery}
+                onChange={(e) => setSearchQuery(e.target.value)}
+                className="w-full pl-9 pr-8 py-1.5 bg-zinc-900/90 text-xs text-white rounded-lg border border-zinc-800 placeholder-zinc-500 focus:outline-none focus:border-indigo-500/50 transition-colors"
+              />
+              {searchQuery && (
+                <button
+                  onClick={() => setSearchQuery("")}
+                  className="absolute inset-y-0 right-0 flex items-center pr-2.5 text-zinc-500 hover:text-zinc-300 cursor-pointer"
+                >
+                  <X className="h-3 w-3" />
+                </button>
+              )}
+            </div>
           </div>
 
           {/* Model Preset List */}
@@ -1697,95 +1881,75 @@ export default function StudioPage() {
               </div>
             ) : (
               (() => {
-                const filtered = products.filter(
-                  (p) => selectedCategoryTab === "all" || (p.category || "").toLowerCase().trim() === selectedCategoryTab
-                );
+                const filtered = products.filter((p) => {
+                  const matchesCategory = selectedCategoryTab === "all" || (p.category || "").toLowerCase().trim() === selectedCategoryTab;
+                  const matchesSearch = !searchQuery.trim() || 
+                    (p.name || "").toLowerCase().includes(searchQuery.toLowerCase().trim()) || 
+                    (p.category || "").toLowerCase().includes(searchQuery.toLowerCase().trim());
+                  return matchesCategory && matchesSearch;
+                });
                 
                 if (filtered.length === 0) {
                   return (
                     <div className="py-12 text-center px-4">
-                      <p className="text-sm text-zinc-500 font-medium">No templates in this category.</p>
+                      <p className="text-sm text-zinc-500 font-medium">
+                        {searchQuery.trim() ? "No garments match your search." : "No templates in this category."}
+                      </p>
                     </div>
                   );
                 }
                 
-                return filtered.map((product) => (
-                  <button
-                    key={product.id}
-                    onClick={() => setActiveProduct(product)}
-                    className={`w-full text-left p-3 rounded-xl border transition-all flex items-center gap-3 group cursor-pointer ${
-                      activeProduct?.id === product.id
-                        ? "bg-indigo-500/10 border-indigo-500/30 shadow-inner"
-                        : "bg-zinc-900/20 border-zinc-900 hover:border-zinc-800 hover:bg-zinc-900/40"
-                    }`}
-                  >
-                    <div className="w-12 h-12 bg-zinc-950 border border-zinc-800 rounded-lg overflow-hidden shrink-0 flex items-center justify-center group-hover:border-zinc-700 transition-colors">
-                      <img 
-                        src={product.texture_url} 
-                        alt={product.name} 
-                        className="w-full h-full object-cover opacity-60 group-hover:opacity-80 transition-opacity" 
-                      />
-                    </div>
-                    <div className="truncate flex-1">
-                      <h4 className="text-xs font-semibold text-zinc-200 group-hover:text-white transition-colors truncate">
-                        {product.name}
-                      </h4>
-                      <p className="text-xs text-zinc-500 mt-0.5 truncate">
-                        Deploy: {new Date(product.created_at).toLocaleDateString()}
-                      </p>
-                    </div>
-                    <ChevronRight className={`w-3.5 h-3.5 text-zinc-600 transition-transform ${
-                      activeProduct?.id === product.id ? "text-indigo-400 translate-x-0.5" : "group-hover:translate-x-0.5"
-                    }`} />
-                  </button>
-                ));
+                return filtered.map((product) => {
+                  const dbStockStatus = product.stock_status || null;
+                  const rawStockLocal = typeof window !== "undefined" ? localStorage.getItem(`apparel_stock_${product.id}`) : null;
+                  let persStockStatus = "in_stock";
+                  if (product.description) {
+                    const stockMatch = product.description.match(/<!--STOCK:STATUS=(in_stock|out_of_stock)-->/);
+                    if (stockMatch) {
+                      persStockStatus = stockMatch[1];
+                    }
+                  }
+                  const stockStatus = rawStockLocal || dbStockStatus || persStockStatus || "in_stock";
+
+                  return (
+                    <button
+                      key={product.id}
+                      onClick={() => setActiveProduct(product)}
+                      className={`w-full text-left p-3 rounded-xl border transition-all flex items-center gap-3 group cursor-pointer ${
+                        activeProduct?.id === product.id
+                          ? "bg-indigo-500/10 border-indigo-500/30 shadow-inner"
+                          : "bg-zinc-900/20 border-zinc-900 hover:border-zinc-800 hover:bg-zinc-900/40"
+                      }`}
+                    >
+                      <div className="w-12 h-12 bg-zinc-950 border border-zinc-800 rounded-lg overflow-hidden shrink-0 flex items-center justify-center group-hover:border-zinc-700 transition-colors relative">
+                        <img 
+                          src={product.texture_url} 
+                          alt={product.name} 
+                          className="w-full h-full object-cover opacity-60 group-hover:opacity-80 transition-opacity" 
+                        />
+                        {stockStatus === "out_of_stock" && (
+                          <div className="absolute inset-0 bg-black/75 flex items-center justify-center text-[8px] font-black text-red-400 tracking-wider uppercase select-none">OOS</div>
+                        )}
+                      </div>
+                      <div className="truncate flex-1">
+                        <h4 className="text-xs font-semibold text-zinc-200 group-hover:text-white transition-colors truncate flex items-center justify-between gap-1.5">
+                          <span>{product.name}</span>
+                          {stockStatus === "out_of_stock" && (
+                            <span className="text-[8px] bg-red-950/40 border border-red-900/40 text-red-400 font-extrabold px-1 rounded uppercase tracking-wider shrink-0 select-none">OOS</span>
+                          )}
+                        </h4>
+                        <p className="text-xs text-zinc-500 mt-0.5 truncate">
+                          Deploy: {new Date(product.created_at).toLocaleDateString()}
+                        </p>
+                      </div>
+                      <ChevronRight className={`w-3.5 h-3.5 text-zinc-600 transition-transform ${
+                        activeProduct?.id === product.id ? "text-indigo-400 translate-x-0.5" : "group-hover:translate-x-0.5"
+                      }`} />
+                    </button>
+                  );
+                });
               })()
             )}
-          </div>
-          {/* Premium Material Selector inside Left Sidebar! */}
-          <div className="p-4 border-t border-zinc-900 bg-zinc-950/60 mt-auto shrink-0 select-none">
-            <h3 className="text-xs font-bold text-zinc-400 uppercase tracking-widest flex items-center gap-2 mb-2">
-              <Sparkles className="w-3.5 h-3.5 text-indigo-400 animate-pulse" />
-              <span>Premium Fabrics</span>
-            </h3>
-            <p className="text-xs text-zinc-500 mb-3.5 leading-relaxed">
-              Tailor physical surface reflections. Premium selections add a custom upcharge.
-            </p>
-            
-            <div className="space-y-2">
-              {Object.entries(fabricProperties).map(([key, value]) => (
-                <button
-                  key={key}
-                  onClick={() => {
-                    setSelectedFabric(key);
-                    startGuestTrialIfNeeded();
-                  }}
-                  className={`w-full text-left p-2.5 rounded-xl border transition-all flex flex-col gap-1 group cursor-pointer ${
-                    selectedFabric === key
-                      ? "bg-indigo-500/10 border-indigo-500/30 shadow-inner"
-                      : "bg-zinc-900/20 border-zinc-900 hover:border-zinc-800 hover:bg-zinc-900/40"
-                  }`}
-                >
-                  <div className="flex items-center justify-between w-full">
-                    <span className={`text-sm font-bold ${selectedFabric === key ? "text-indigo-400" : "text-zinc-300 group-hover:text-white"}`}>
-                      {key === "cotton" ? "Matte Organic Cotton" : key === "polyester" ? "Shiny Athletic Polyester" : "Heavy Luxury Fleece"}
-                    </span>
-                    {value.upcharge > 0 ? (
-                      <span className="text-sm font-extrabold px-1.5 py-0.5 bg-emerald-500/10 text-emerald-400 border border-emerald-500/20 rounded-md">
-                        +₹{value.upcharge.toLocaleString('en-IN')}
-                      </span>
-                    ) : (
-                      <span className="text-sm font-extrabold px-1.5 py-0.5 bg-zinc-850 text-zinc-400 border border-zinc-800 rounded-md">
-                        FREE
-                      </span>
-                    )}
-                  </div>
-                  <span className="text-xs text-zinc-500 leading-snug">
-                    {key === "cotton" ? "Flat, organic 100% cotton threads" : key === "polyester" ? "Reflective, sleek high-performance finish" : "Extra thick, warm luxury heavy fleece feel"}
-                  </span>
-                </button>
-              ))}
-            </div>
           </div>
         </aside>
 
@@ -1997,7 +2161,7 @@ export default function StudioPage() {
           </div>
 
           {/* Floating 3D Preview Window */}
-          <div className="absolute bottom-6 right-6 w-[320px] h-[340px] bg-zinc-900/90 border border-zinc-800 rounded-2xl shadow-2xl backdrop-blur-md overflow-hidden flex flex-col z-20 group">
+          <div className="absolute top-6 right-6 w-[320px] h-[340px] bg-zinc-900/90 border border-zinc-800 rounded-2xl shadow-2xl backdrop-blur-md overflow-hidden flex flex-col z-20 group">
             
             {/* Header of 3D frame */}
             <div className="px-4 py-2.5 border-b border-zinc-800 bg-zinc-950/40 flex items-center justify-between text-xs select-none">
@@ -2082,6 +2246,52 @@ export default function StudioPage() {
               Left Click + Drag to rotate 3D model. Scroll to zoom.
             </div>
 
+          </div>
+
+          {/* Floating Premium Fabrics Selector (Positioned in the empty space on the left side of the canvas area) */}
+          <div className="absolute top-6 left-6 w-[320px] bg-zinc-900/90 border border-zinc-800 rounded-2xl shadow-2xl backdrop-blur-md p-4 flex flex-col z-20 select-none text-left animate-in fade-in slide-in-from-left-4 duration-300">
+            <h3 className="text-xs font-bold text-zinc-400 uppercase tracking-widest flex items-center gap-2 mb-2">
+              <Sparkles className="w-3.5 h-3.5 text-indigo-400 animate-pulse" />
+              <span>Premium Fabrics</span>
+            </h3>
+            <p className="text-[10px] text-zinc-500 mb-3 leading-relaxed">
+              Tailor physical surface reflections. Premium selections add a custom upcharge.
+            </p>
+            
+            <div className="space-y-2">
+              {Object.entries(fabricProperties).map(([key, value]) => (
+                <button
+                  key={key}
+                  onClick={() => {
+                    setSelectedFabric(key);
+                    startGuestTrialIfNeeded();
+                  }}
+                  className={`w-full text-left p-2.5 rounded-xl border transition-all flex flex-col gap-1 group cursor-pointer ${
+                    selectedFabric === key
+                      ? "bg-indigo-500/10 border-indigo-500/30 shadow-inner"
+                      : "bg-zinc-900/20 border-zinc-900 hover:border-zinc-800 hover:bg-zinc-900/40"
+                  }`}
+                >
+                  <div className="flex items-center justify-between w-full">
+                    <span className={`text-xs font-black uppercase tracking-wider ${selectedFabric === key ? "text-indigo-400" : "text-zinc-300 group-hover:text-white"}`}>
+                      {value.label}
+                    </span>
+                    {value.upcharge > 0 ? (
+                      <span className="text-[10px] font-extrabold px-1.5 py-0.5 bg-emerald-500/10 text-emerald-400 border border-emerald-500/20 rounded-md">
+                        +₹{value.upcharge.toLocaleString('en-IN')}
+                      </span>
+                    ) : (
+                      <span className="text-[10px] font-extrabold px-1.5 py-0.5 bg-zinc-850 text-zinc-400 border border-zinc-800 rounded-md">
+                        FREE
+                      </span>
+                    )}
+                  </div>
+                  <span className="text-[10px] text-zinc-500 leading-normal font-medium">
+                    {value.desc}
+                  </span>
+                </button>
+              ))}
+            </div>
           </div>
 
         </section>

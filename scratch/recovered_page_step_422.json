@@ -1,0 +1,15 @@
+{
+  "name": "replace_file_content",
+  "args": {
+    "AllowMultiple": "false",
+    "Description": "\"Restore closing conditional parent block bracket on homepage to fix Turbopack build failure.\"",
+    "EndLine": "831",
+    "Instruction": "\"Add the missing ')}' parenthesis and bracket back before the drops calendar comment.\"",
+    "ReplacementContent": "\"          )}\\n        </section>\\n      )}\\n\\n      {/* ====== THE THREAD3D ATELIER (Services / Drop Calendar) ====== */}\\n      <section className=\\\"py-20 border-t border-zinc-900/60 bg-zinc-950/40 relative\\\">\"",
+    "StartLine": "826",
+    "TargetContent": "\"          )}\\n        </section>\\n           {/* ====== THE THREAD3D ATELIER (Services / Drop Calendar) ====== */}\\n      <section className=\\\"py-20 border-t border-zinc-900/60 bg-zinc-950/40 relative\\\">\"",
+    "TargetFile": "\"E:\\\\APP 3D\\\\3d-apparel-studio\\\\src\\\\app\\\\page.js\"",
+    "toolAction": "\"Fixing conditional closing tags in page.js\"",
+    "toolSummary": "\"Restore closing brace on page.js\""
+  }
+}

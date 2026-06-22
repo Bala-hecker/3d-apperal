@@ -59,7 +59,7 @@ export async function POST(request) {
 
   try {
     const body = await request.json();
-    const { id, label } = body;
+    const { id, label, image_url } = body;
 
     if (!id || !label) {
       return Response.json({ error: "Category ID and Label are required" }, { status: 400 });
@@ -70,7 +70,7 @@ export async function POST(request) {
 
     const { data, error } = await supabase
       .from("categories")
-      .insert([{ id: cleanId, label: cleanLabel }])
+      .insert([{ id: cleanId, label: cleanLabel, image_url: image_url || "" }])
       .select("*")
       .single();
 
@@ -93,6 +93,48 @@ export async function POST(request) {
     return Response.json({ error: err.message }, { status: 500 });
   }
 }
+
+// PUT: Update category details (Admin only)
+export async function PUT(request) {
+  const auth = await verifyAdmin(request);
+  if (auth.error) {
+    return Response.json({ error: auth.error }, { status: auth.status });
+  }
+
+  try {
+    const body = await request.json();
+    const { id, label, image_url } = body;
+
+    if (!id || !label) {
+      return Response.json({ error: "Category ID and Label are required" }, { status: 400 });
+    }
+
+    const cleanLabel = label.trim();
+
+    const { data, error } = await supabase
+      .from("categories")
+      .update({ label: cleanLabel, image_url: image_url || "" })
+      .eq("id", id)
+      .select("*")
+      .single();
+
+    if (error) {
+      return Response.json({ error: error.message }, { status: 500 });
+    }
+
+    // System log
+    await supabase.from("system_logs").insert([{
+      operator: auth.user.email,
+      action: `Updated category: ${cleanLabel} (${id})`,
+      created_at: new Date().toISOString()
+    }]);
+
+    return Response.json({ success: true, category: data });
+  } catch (err) {
+    return Response.json({ error: err.message }, { status: 500 });
+  }
+}
+
 
 // DELETE: Remove category (Admin only)
 export async function DELETE(request) {

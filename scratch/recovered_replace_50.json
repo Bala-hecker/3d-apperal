@@ -1,0 +1,12 @@
+{
+  "AllowMultiple": "false",
+  "Description": "\"Fix ReferenceError by renaming handleUpdateOrderFulfillment to handleSaveFulfillment\"",
+  "EndLine": "5017",
+  "Instruction": "\"Rename handleUpdateOrderFulfillment to handleSaveFulfillment to fix the ReferenceError\"",
+  "ReplacementContent": "\"                                    <button onClick={() => handleSaveFulfillment(order.id, statusInput, carrierInput, trackingNumberInput)}\"",
+  "StartLine": "5013",
+  "TargetContent": "\"                                    <button onClick={() => handleUpdateOrderFulfillment(order.id, statusInput, carrierInput, trackingNumberInput)}\"",
+  "TargetFile": "\"E:\\\\APP 3D\\\\3d-apparel-studio\\\\src\\\\app\\\\admin\\\\page.js\"",
+  "toolAction": "\"Renaming handleUpdateOrderFulfillment to handleSaveFulfillment\"",
+  "toolSummary": "\"Replace file content\""
+}

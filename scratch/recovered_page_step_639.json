@@ -1,0 +1,15 @@
+{
+  "name": "replace_file_content",
+  "args": {
+    "AllowMultiple": "false",
+    "Description": "\"Fixed JSX tag nesting order on the homepage template.\"",
+    "EndLine": "854",
+    "Instruction": "\"Correct nesting of conditional and section tags in src/app/page.js\"",
+    "ReplacementContent": "\"            </div>\\n          )}\\n        </section>\\n      )}\"",
+    "StartLine": "851",
+    "TargetContent": "\"            </div>\\n          )}\\n        </section>\"",
+    "TargetFile": "\"e:\\\\APP 3D\\\\3d-apparel-studio\\\\src\\\\app\\\\page.js\"",
+    "toolAction": "\"Fixing page.js tag nesting\"",
+    "toolSummary": "\"Edit page.js\""
+  }
+}
